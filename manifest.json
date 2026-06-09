@@ -2,7 +2,7 @@
   "name": "Parametría — Inyección de Plásticos",
   "short_name": "Parametría",
   "description": "App para registrar parametría de procesos de inyección de plásticos",
-  "start_url": "index.html",
+  "start_url": "./parametria-inyeccion.html",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0d1117",
