@@ -882,6 +882,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const pg = document.getElementById('piezaImgGal');
   if (pc) pc.addEventListener('change', handlePiezaImg);
   if (pg) pg.addEventListener('change', handlePiezaImg);
+
+  // Precargar logo para el PDF
+  const logoImg = new Image();
+  logoImg.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = logoImg.naturalWidth; c.height = logoImg.naturalHeight;
+    c.getContext('2d').drawImage(logoImg, 0, 0);
+    window._logoBase64 = c.toDataURL('image/png');
+    window._logoAR     = logoImg.naturalWidth / logoImg.naturalHeight;
+  };
+  logoImg.onerror = () => { window._logoBase64 = null; window._logoAR = 1; };
+  logoImg.src = 'logo_macroplast.png';
 });
 
 // Imagen de la pieza
@@ -1170,6 +1182,8 @@ function deletePhoto(i, isOrder) {
 // ══════════════════════════════════════════════════
 // Almacena los nombres editados de cada hoja { pageIndex: name }
 if (!window._photoPageNames) window._photoPageNames = [];
+// Almacena las observaciones de cada hoja de fotos
+if (!window._photoPageObs) window._photoPageObs = [];
 
 function renderOrderGrid() {
   const grid = document.getElementById('orderGrid');
@@ -1210,6 +1224,36 @@ function renderOrderGrid() {
       wrap.appendChild(inp);
       wrap.appendChild(icon);
       grid.appendChild(wrap);
+
+      // Textarea de observaciones de esta hoja
+      const obsWrap = document.createElement('div');
+      obsWrap.className = 'grid-col-full';
+      obsWrap.style.cssText = 'grid-column:1/-1;margin-bottom:4px;';
+
+      const obsLabel = document.createElement('label');
+      obsLabel.textContent = 'Observaciones de esta hoja (aparecerá al pie del PDF)';
+      obsLabel.style.cssText = 'display:block;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;';
+
+      const obsTA = document.createElement('textarea');
+      obsTA.placeholder = 'Ej.: Parámetros de ajuste inicial, notas de proceso…';
+      obsTA.rows = 2;
+      obsTA.value = window._photoPageObs[pageIdx] !== undefined ? window._photoPageObs[pageIdx] : '';
+      obsTA.dataset.obsPageIdx = pageIdx;
+      obsTA.style.cssText = [
+        'width:100%', 'background:var(--card)', 'border:1px solid var(--border)',
+        'border-radius:var(--radius)', 'color:var(--text)', 'font-family:Barlow,sans-serif',
+        'font-size:13px', 'padding:8px 10px', 'outline:none', 'resize:vertical',
+        'transition:border-color .2s'
+      ].join(';');
+      obsTA.addEventListener('focus', () => { obsTA.style.borderColor = 'var(--accent)'; });
+      obsTA.addEventListener('blur',  () => { obsTA.style.borderColor = 'var(--border)'; });
+      obsTA.addEventListener('input', () => {
+        window._photoPageObs[pageIdx] = obsTA.value;
+      });
+
+      obsWrap.appendChild(obsLabel);
+      obsWrap.appendChild(obsTA);
+      grid.appendChild(obsWrap);
     }
     const card = createPhotoCard(p, i, true);
     grid.appendChild(card);
@@ -1340,6 +1384,14 @@ async function generatePDF() {
     // franja superior naranja
     doc.setFillColor(...cOrange);
     doc.rect(0, 0, W, 9, 'F');
+    // logo Macroplast — centrado en la franja naranja, extremo derecho
+    if (window._logoBase64) {
+      const logoH = 7.5;
+      const logoW = logoH * (window._logoAR || 1);
+      const lX = W - margin - logoW;
+      const lY = (9 - logoH) / 2;
+      try { doc.addImage(window._logoBase64, 'PNG', lX, lY, logoW, logoH, '', 'FAST'); } catch(e) {}
+    }
   }
 
   function pageHeader(title, pageNum, totalPages) {
@@ -1404,7 +1456,7 @@ async function generatePDF() {
   //  PÁGINA 1 — DATOS
   // ══════════════════════════════
   pageBackground();
-  pageHeader('Hoja de proceso', 1, totalPages);
+  pageHeader('Hoja de procesos', 1, totalPages);
 
   // Resolver imagen de pieza con rotación manual aplicada
   const piezaImgFinal = await getPiezaImgFinal();
@@ -1461,9 +1513,9 @@ async function generatePDF() {
   let y = hLineY + 4;
   y = dataRow('Máquina',            data.maquina,                          y, false);
   y = dataRow('Materia prima',      data.materiaPrima,                     y, true);
-  y = dataRow('Peso de pieza',      `${data.pesoPieza} g × ${data.cantPieza} unid.`, y, true);
-  y = dataRow('Peso de colada',     `${data.pesoColada} g × ${data.cantColada} unid.`, y, false);
-  y = dataRow('Conexiones de agua', data.agua,                             y, true);
+  y = dataRow('Peso de pieza',      `${data.pesoPieza} g × ${data.cantPieza} unid.`, y, false);
+  y = dataRow('Peso de colada',     `${data.pesoColada} g × ${data.cantColada} unid.`, y, true);
+  y = dataRow('Conexiones de agua', data.agua,                             y, false);
 
   // bloque peso total
   const totalPieza  = (parseFloat(data.pesoPieza)  * parseInt(data.cantPieza)).toFixed(1);
@@ -1569,13 +1621,19 @@ async function generatePDF() {
     pageHeader(pageNames[pi] || `Hoja ${pi + 1}`, pi + 2, totalPages);
     pageFooter();
 
+    const pageObs = (window._photoPageObs && window._photoPageObs[pi]) ? window._photoPageObs[pi].trim() : '';
+
+    // Reservar espacio al pie si hay observaciones
+    const obsBoxH   = pageObs ? Math.min(28, 8 + doc.splitTextToSize(pageObs, W - margin * 2 - 8).length * 5) : 0;
+    const obsMargin = pageObs ? obsBoxH + 6 : 0;
+
     const startIdx = pi * 4;
     const pagePhotos = photos.slice(startIdx, startIdx + 4);
 
     // Grilla fija 2×2 — 4 posiciones siempre iguales
     // Las fotos se ubican cada una en su celda respetando aspect ratio
     const gap   = 5;   // mm entre celdas
-    const areaTop = 28, areaBot = H - 14;
+    const areaTop = 28, areaBot = H - 14 - obsMargin;
     const areaW = W - margin * 2;
     const areaH = areaBot - areaTop;
     const cellW = (areaW - gap) / 2;
@@ -1636,6 +1694,41 @@ async function generatePDF() {
       doc.setDrawColor(...cBorder);
       doc.setLineWidth(0.3);
       doc.rect(cell.x, cell.y, cellW, cellH, 'S');
+    }
+
+    // ── CUADRO DE OBSERVACIONES AL PIE ──
+    if (pageObs) {
+      const obsY  = H - 14 - obsBoxH - 2;
+      const obsW  = W - margin * 2;
+
+      // Fondo y borde del cuadro
+      doc.setFillColor(...cLight);
+      doc.setDrawColor(...cBorder);
+      doc.setLineWidth(0.4);
+      doc.roundedRect(margin, obsY, obsW, obsBoxH, 2, 2, 'FD');
+
+      // Línea de acento izquierda
+      doc.setFillColor(...cOrange);
+      doc.rect(margin, obsY, 2.5, obsBoxH, 'F');
+
+      // Label
+      doc.setFontSize(6.5);
+      doc.setTextColor(...cMid);
+      doc.setFont('helvetica', 'bold');
+      doc.text('OBSERVACIONES', margin + 5, obsY + 5);
+
+      // Texto
+      doc.setFontSize(8.5);
+      doc.setTextColor(...cDark);
+      doc.setFont('helvetica', 'normal');
+      const obsLines = doc.splitTextToSize(pageObs, obsW - 8);
+      let ty = obsY + 10;
+      obsLines.forEach(line => {
+        if (ty < obsY + obsBoxH - 2) {
+          doc.text(line, margin + 5, ty);
+          ty += 5;
+        }
+      });
     }
   }
 
