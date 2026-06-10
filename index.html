@@ -305,7 +305,7 @@
 
   /* photo grid */
   .photos-grid {
-    display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+    display: flex; flex-direction: column; gap: 0;
     margin-top: 16px;
   }
   .photo-card {
@@ -468,6 +468,11 @@
       Datos del proceso
     </div>
 
+    <div class="field">
+        <label>Responsable</label>
+        <input type="text" id="responsable" placeholder="Responsable del reporte">
+    </div>
+
     <div class="form-grid">
       <div class="form-row">
         <div class="field">
@@ -480,10 +485,7 @@
         </div>
       </div>
 
-      <div class="field">
-        <label>Responsable</label>
-        <input type="text" id="responsable" placeholder="Nombre del responsable del reporte">
-      </div>
+      
 
       <!-- Imagen de la pieza -->
       <div class="field">
@@ -576,7 +578,7 @@
       <div class="field">
         <label>Conexiones de agua</label>
         <div class="agua-grid" id="aguaGrid">
-          <div class="agua-item" data-val="Lado fijo" onclick="toggleAgua(this)">
+          <div class="agua-item" data-val="Placas lado fijo" onclick="toggleAgua(this)">
             <div class="dot"></div><span class="agua-label">Lado fijo</span>
             <div class="agua-pct">
               <button class="pct-btn" onclick="setPct(event,this,0)">Sin agua</button>
@@ -586,7 +588,7 @@
               <button class="pct-btn" onclick="setPct(event,this,100)">100%</button>
             </div>
           </div>
-          <div class="agua-item" data-val="Lado móvil" onclick="toggleAgua(this)">
+          <div class="agua-item" data-val="Placas lado móvil" onclick="toggleAgua(this)">
             <div class="dot"></div><span class="agua-label">Lado móvil</span>
             <div class="agua-pct">
               <button class="pct-btn" onclick="setPct(event,this,0)">Sin agua</button>
@@ -1098,10 +1100,20 @@ function updatePhotoGrid() {
   });
 }
 
-function createPhotoCard(p, i, isOrder) {
+function createPhotoCard(p, photoIdx, pageIdxOrBool, slot) {
+  // Firma unificada:
+  //   isOrder=false  → createPhotoCard(p, i, false)      (paso 1 — galería)
+  //   isOrder=true   → createPhotoCard(p, photoIdx, pageIdx, slot) (paso 2 — ordenar)
+  const isOrder = pageIdxOrBool !== false && pageIdxOrBool !== undefined && typeof pageIdxOrBool === 'number';
+  const pageIdx = isOrder ? pageIdxOrBool : null;
+
   const card = document.createElement('div');
   card.className = 'photo-card';
-  card.dataset.idx = i;
+  card.dataset.idx = photoIdx;
+  if (isOrder) {
+    card.dataset.pageIdx = pageIdx;
+    card.dataset.slot    = slot;
+  }
 
   const img = document.createElement('img');
   img.src = p.dataUrl;
@@ -1110,24 +1122,37 @@ function createPhotoCard(p, i, isOrder) {
 
   const num = document.createElement('div');
   num.className = 'photo-num';
-  num.textContent = `#${i + 1}`;
+  num.textContent = `#${photoIdx + 1}`;
 
   const actions = document.createElement('div');
   actions.className = 'photo-actions';
 
-  // rotate btn
   const rotBtn = document.createElement('button');
   rotBtn.className = 'photo-action-btn rot';
   rotBtn.textContent = '🔄';
   rotBtn.title = 'Rotar';
-  rotBtn.onclick = e => { e.stopPropagation(); rotatePhoto(i, isOrder); };
+  rotBtn.onclick = e => { e.stopPropagation(); rotatePhoto(photoIdx, isOrder); };
 
-  // delete btn
   const delBtn = document.createElement('button');
   delBtn.className = 'photo-action-btn del';
   delBtn.textContent = '🗑';
   delBtn.title = 'Eliminar';
-  delBtn.onclick = e => { e.stopPropagation(); deletePhoto(i, isOrder); };
+  delBtn.onclick = e => {
+    e.stopPropagation();
+    if (isOrder) {
+      // Eliminar del layout y del array photos
+      window._pageLayout[pageIdx].splice(slot, 1);
+      // Actualizar índices mayores en todo el layout
+      photos.splice(photoIdx, 1);
+      window._pageLayout = window._pageLayout.map(pg =>
+        pg.map(i => i > photoIdx ? i - 1 : i)
+      );
+      renderOrderGrid();
+    } else {
+      deletePhoto(photoIdx, false);
+    }
+    showToast('Foto eliminada');
+  };
 
   actions.appendChild(rotBtn);
   actions.appendChild(delBtn);
@@ -1136,27 +1161,24 @@ function createPhotoCard(p, i, isOrder) {
   card.appendChild(actions);
 
   if (isOrder) {
-    // Botones de reordenamiento (funciona en cualquier dispositivo)
-    const moveWrap = document.createElement('div');
-    moveWrap.style.cssText = 'position:absolute;bottom:6px;right:6px;display:flex;gap:4px;';
-    const upBtn = document.createElement('button');
-    upBtn.className = 'photo-action-btn move-btn';
-    upBtn.style.cssText = 'background:rgba(0,0,0,.55);color:#fff;border:none;font-size:14px;';
-    upBtn.textContent = '↑';
-    upBtn.title = 'Mover arriba';
-    upBtn.onclick = e => { e.stopPropagation(); movePhoto(i, -1); };
-    const downBtn = document.createElement('button');
-    downBtn.className = 'photo-action-btn move-btn';
-    downBtn.style.cssText = 'background:rgba(0,0,0,.55);color:#fff;border:none;font-size:14px;';
-    downBtn.textContent = '↓';
-    downBtn.title = 'Mover abajo';
-    downBtn.onclick = e => { e.stopPropagation(); movePhoto(i, 1); };
-    moveWrap.appendChild(upBtn);
-    moveWrap.appendChild(downBtn);
-    card.appendChild(moveWrap);
+    // Drag & Drop HTML5
+    card.draggable = true;
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', `${pageIdx},${slot}`);
+      card.style.opacity = '.4';
+    });
+    card.addEventListener('dragend', () => { card.style.opacity = ''; });
+    card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const [fp, fs] = (e.dataTransfer.getData('text/plain') || '').split(',').map(Number);
+      if (!isNaN(fp)) movePhotoLayout(fp, fs, pageIdx, slot);
+    });
 
-    // Touch drag (arrastrá la foto en móvil)
-    initTouchDrag(card, i);
+    // Touch drag
+    initTouchDrag(card, pageIdx, slot);
   }
 
   return card;
@@ -1180,135 +1202,303 @@ function deletePhoto(i, isOrder) {
 //  se reemplaza completamente con touchstart/touchmove/touchend
 //  y botones de flecha para subir/bajar.
 // ══════════════════════════════════════════════════
-// Almacena los nombres editados de cada hoja { pageIndex: name }
+//  ORDER GRID — layout por páginas
+//  _pageLayout : [[photoIdx, ...], ...]  — distribución libre
+//  _photoPageNames / _photoPageObs — por índice de hoja
+// ══════════════════════════════════════════════════
 if (!window._photoPageNames) window._photoPageNames = [];
-// Almacena las observaciones de cada hoja de fotos
-if (!window._photoPageObs) window._photoPageObs = [];
+if (!window._photoPageObs)   window._photoPageObs   = [];
+if (!window._pageLayout)     window._pageLayout     = [];
+
+// Inicializa/sincroniza _pageLayout con photos[]
+function initPageLayout() {
+  const allIdxs   = photos.map((_, i) => i);
+  const assigned  = new Set((window._pageLayout || []).flat());
+
+  // Si no hay layout aún, crear de a 4
+  if (!window._pageLayout.length) {
+    window._pageLayout = [];
+    for (let i = 0; i < photos.length; i += 4)
+      window._pageLayout.push(allIdxs.slice(i, i + 4));
+    return;
+  }
+
+  // Eliminar referencias a fotos borradas (índices inválidos)
+  window._pageLayout = window._pageLayout.map(page =>
+    page.filter(i => i < photos.length)
+  );
+
+  // Agregar fotos nuevas (no asignadas) al final
+  const newIdxs = allIdxs.filter(i => !assigned.has(i));
+  for (const idx of newIdxs) {
+    let placed = false;
+    for (const page of window._pageLayout) {
+      if (page.length < 4) { page.push(idx); placed = true; break; }
+    }
+    if (!placed) window._pageLayout.push([idx]);
+  }
+}
+
+function getPhotoPages() {
+  if (!photos.length) return [];
+  initPageLayout();
+  return window._pageLayout.map(page => page.map(i => photos[i]));
+}
+
+function normalizeBreaks() {} // compatibilidad
 
 function renderOrderGrid() {
   const grid = document.getElementById('orderGrid');
   grid.innerHTML = '';
-  photos.forEach((p, i) => {
-    if (i % 4 === 0) {
-      const pageIdx = Math.floor(i / 4);
-      const defaultName = `Hoja ${pageIdx + 1}`;
+  if (!photos.length) { window._pageLayout = []; return; }
 
-      const wrap = document.createElement('div');
-      wrap.className = 'page-divider';
+  initPageLayout();
 
-      // Input editable con el nombre de la hoja
-      const inp = document.createElement('input');
-      inp.type        = 'text';
-      inp.value       = window._photoPageNames[pageIdx] !== undefined
-                          ? window._photoPageNames[pageIdx]
-                          : defaultName;
-      inp.placeholder = defaultName;
-      inp.dataset.pageIdx = pageIdx;
-      inp.style.cssText = [
-        'flex:1', 'background:transparent', 'border:none',
-        'border-bottom:1px dashed var(--accent)', 'color:var(--accent)',
-        'font-family:inherit', 'font-size:11px', 'font-weight:700',
-        'letter-spacing:2px', 'text-transform:uppercase',
-        'outline:none', 'padding:2px 4px', 'min-width:0',
-        'cursor:text'
+  window._pageLayout.forEach((pageIndices, pageIdx) => {
+    const defaultName = `Hoja ${pageIdx + 1}`;
+
+    // ── Tarjeta de hoja (span full width) ──
+    const pageCard = document.createElement('div');
+    pageCard.style.cssText = [
+      'grid-column:1/-1',
+      'border:1px solid var(--border)',
+      'border-radius:var(--radius)',
+      'overflow:hidden',
+      'margin-bottom:12px',
+      'background:var(--card)',
+    ].join(';');
+
+    // ── Franja naranja de nombre ──
+    const header = document.createElement('div');
+    header.style.cssText = [
+      'background:var(--accent)',
+      'padding:6px 10px',
+      'display:flex','align-items:center','gap:8px',
+    ].join(';');
+
+    const nameTA = document.createElement('textarea');
+    nameTA.rows = 1;
+    nameTA.value = window._photoPageNames[pageIdx] !== undefined
+      ? window._photoPageNames[pageIdx] : defaultName;
+    nameTA.placeholder = defaultName;
+    nameTA.style.cssText = [
+      'flex:1','background:transparent','border:none',
+      'color:#fff','font-family:inherit','font-size:11px','font-weight:700',
+      'letter-spacing:2px','text-transform:uppercase',
+      'outline:none','padding:0','resize:none','overflow:hidden',
+      'line-height:1.4','cursor:text',
+    ].join(';');
+    nameTA.addEventListener('input', () => {
+      window._photoPageNames[pageIdx] = nameTA.value;
+      // Auto-altura
+      nameTA.style.height = 'auto';
+      nameTA.style.height = nameTA.scrollHeight + 'px';
+    });
+    nameTA.addEventListener('click', e => e.stopPropagation());
+    header.appendChild(nameTA);
+
+    // Botón ✕ eliminar hoja (excepto la primera)
+    if (pageIdx > 0) {
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕';
+      delBtn.title = 'Eliminar esta hoja';
+      delBtn.style.cssText = [
+        'width:22px','height:22px','border-radius:4px',
+        'border:1px solid rgba(255,255,255,.4)',
+        'background:rgba(0,0,0,.15)','color:#fff','font-size:11px',
+        'cursor:pointer','flex-shrink:0',
       ].join(';');
-      inp.addEventListener('input', () => {
-        window._photoPageNames[pageIdx] = inp.value;
-      });
-      inp.addEventListener('click', e => e.stopPropagation());
-
-      const icon = document.createElement('span');
-      icon.textContent = '✏️';
-      icon.style.cssText = 'font-size:12px;opacity:.6;flex-shrink:0';
-
-      wrap.appendChild(inp);
-      wrap.appendChild(icon);
-      grid.appendChild(wrap);
-
-      // Textarea de observaciones de esta hoja
-      const obsWrap = document.createElement('div');
-      obsWrap.className = 'grid-col-full';
-      obsWrap.style.cssText = 'grid-column:1/-1;margin-bottom:4px;';
-
-      const obsLabel = document.createElement('label');
-      obsLabel.textContent = 'Observaciones de esta hoja (aparecerá al pie del PDF)';
-      obsLabel.style.cssText = 'display:block;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;';
-
-      const obsTA = document.createElement('textarea');
-      obsTA.placeholder = 'Ej.: Parámetros de ajuste inicial, notas de proceso…';
-      obsTA.rows = 2;
-      obsTA.value = window._photoPageObs[pageIdx] !== undefined ? window._photoPageObs[pageIdx] : '';
-      obsTA.dataset.obsPageIdx = pageIdx;
-      obsTA.style.cssText = [
-        'width:100%', 'background:var(--card)', 'border:1px solid var(--border)',
-        'border-radius:var(--radius)', 'color:var(--text)', 'font-family:Barlow,sans-serif',
-        'font-size:13px', 'padding:8px 10px', 'outline:none', 'resize:vertical',
-        'transition:border-color .2s'
-      ].join(';');
-      obsTA.addEventListener('focus', () => { obsTA.style.borderColor = 'var(--accent)'; });
-      obsTA.addEventListener('blur',  () => { obsTA.style.borderColor = 'var(--border)'; });
-      obsTA.addEventListener('input', () => {
-        window._photoPageObs[pageIdx] = obsTA.value;
-      });
-
-      obsWrap.appendChild(obsLabel);
-      obsWrap.appendChild(obsTA);
-      grid.appendChild(obsWrap);
+      delBtn.onclick = e => {
+        e.stopPropagation();
+        const prev = window._pageLayout[pageIdx - 1];
+        for (const idx of [...pageIndices]) {
+          if (prev.length < 4) prev.push(idx);
+        }
+        window._pageLayout.splice(pageIdx, 1);
+        window._photoPageNames.splice(pageIdx, 1);
+        window._photoPageObs.splice(pageIdx, 1);
+        renderOrderGrid();
+      };
+      header.appendChild(delBtn);
     }
-    const card = createPhotoCard(p, i, true);
-    grid.appendChild(card);
+
+    pageCard.appendChild(header);
+
+    // ── Grilla 2×2 de fotos ──
+    const photoGrid = document.createElement('div');
+    photoGrid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;';
+
+    for (let slot = 0; slot < 4; slot++) {
+      const photoIdx = pageIndices[slot];
+      const photo    = photoIdx !== undefined ? photos[photoIdx] : undefined;
+
+      if (photo !== undefined) {
+        const card = createPhotoCard(photo, photoIdx, pageIdx, slot);
+        card.style.borderRadius = '6px';
+        photoGrid.appendChild(card);
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'photo-empty-slot';
+        empty.dataset.pageIdx = pageIdx;
+        empty.dataset.slot    = slot;
+        empty.style.cssText = [
+          'display:flex','align-items:center','justify-content:center',
+          'aspect-ratio:4/3','border:2px dashed var(--border)',
+          'border-radius:6px','background:var(--bg)',
+          'color:var(--muted)','font-size:22px',
+          'transition:border-color .2s,background .2s',
+        ].join(';');
+        empty.innerHTML = '<span style="opacity:.3">＋</span>';
+        empty.addEventListener('dragover', e => {
+          e.preventDefault();
+          empty.style.borderColor = 'var(--accent)';
+          empty.style.background  = 'rgba(249,115,22,.07)';
+        });
+        empty.addEventListener('dragleave', () => {
+          empty.style.borderColor = 'var(--border)';
+          empty.style.background  = 'var(--bg)';
+        });
+        empty.addEventListener('drop', e => {
+          e.preventDefault();
+          empty.style.borderColor = 'var(--border)';
+          empty.style.background  = 'var(--bg)';
+          const [fp, fs] = (e.dataTransfer.getData('text/plain') || '').split(',').map(Number);
+          if (!isNaN(fp)) movePhotoLayout(fp, fs, pageIdx, slot);
+        });
+        photoGrid.appendChild(empty);
+      }
+    }
+
+    pageCard.appendChild(photoGrid);
+
+    // ── Observaciones (al pie, como en el PDF) ──
+    const obsWrap = document.createElement('div');
+    obsWrap.style.cssText = [
+      'border-top:2px solid var(--accent)',
+      'padding:8px 10px',
+      'background:var(--bg)',
+    ].join(';');
+
+    const obsLabel = document.createElement('label');
+    obsLabel.textContent = 'Observaciones';
+    obsLabel.style.cssText = 'display:block;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);margin-bottom:4px;';
+
+    const obsTA = document.createElement('textarea');
+    obsTA.placeholder = 'Notas de proceso, ajustes, etc. (aparece al pie del PDF)';
+    obsTA.rows = 2;
+    obsTA.value = window._photoPageObs[pageIdx] !== undefined ? window._photoPageObs[pageIdx] : '';
+    obsTA.style.cssText = [
+      'width:100%','background:transparent','border:none',
+      'color:var(--text)','font-family:Barlow,sans-serif',
+      'font-size:13px','padding:0','outline:none','resize:vertical',
+    ].join(';');
+    obsTA.addEventListener('input', () => { window._photoPageObs[pageIdx] = obsTA.value; });
+
+    obsWrap.appendChild(obsLabel);
+    obsWrap.appendChild(obsTA);
+    pageCard.appendChild(obsWrap);
+
+    grid.appendChild(pageCard);
   });
+
+  // ── Botón agregar hoja ──
+  const addBtn = document.createElement('button');
+  addBtn.innerHTML = '＋ &nbsp;Agregar hoja';
+  addBtn.style.cssText = [
+    'width:100%','padding:10px 0','margin-top:4px',
+    'background:transparent','border:1px dashed var(--accent)',
+    'border-radius:var(--radius)','color:var(--accent)','font-size:11px',
+    'font-weight:700','letter-spacing:2px','text-transform:uppercase',
+    'cursor:pointer','transition:background .2s'
+  ].join(';');
+  addBtn.onmouseenter = () => { addBtn.style.background = 'rgba(249,115,22,.07)'; };
+  addBtn.onmouseleave = () => { addBtn.style.background = 'transparent'; };
+  addBtn.onclick = () => {
+    window._pageLayout.push([]);
+    renderOrderGrid();
+    setTimeout(() => addBtn.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+  };
+  grid.appendChild(addBtn);
+}
+
+// Mueve foto de (fromPage, fromSlot) → (toPage, toSlot), con swap si destino ocupado
+function movePhotoLayout(fromPage, fromSlot, toPage, toSlot) {
+  const fp = window._pageLayout[fromPage];
+  const tp = window._pageLayout[toPage];
+  if (!fp) return;
+  const movingIdx   = fp[fromSlot];
+  if (movingIdx === undefined) return;
+  const displacedIdx = tp[toSlot];
+
+  if (displacedIdx !== undefined) {
+    // Swap
+    fp[fromSlot] = displacedIdx;
+    tp[toSlot]   = movingIdx;
+  } else {
+    // Mover a celda vacía
+    fp.splice(fromSlot, 1);
+    // Insertar en la posición del slot en el array destino
+    tp.splice(Math.min(toSlot, tp.length), 0, movingIdx);
+  }
+  renderOrderGrid();
 }
 
 // ── Touch drag state ──
-let touchDragIdx = null;
-let touchDragEl  = null;
-let touchOverIdx = null;
+let touchDragPage = null;
+let touchDragSlot = null;
+let touchDragEl   = null;
+let touchOverEl   = null;
 
-function initTouchDrag(card, idx) {
+function initTouchDrag(card, pageIdx, slot) {
   card.addEventListener('touchstart', e => {
-    // Solo iniciar si el toque es sobre la imagen (no sobre botones)
-    if (e.target.closest('.photo-action-btn') || e.target.closest('.move-btn')) return;
-    touchDragIdx = idx;
-    touchDragEl  = card;
+    if (e.target.closest('.photo-action-btn')) return;
+    touchDragPage = pageIdx;
+    touchDragSlot = slot;
+    touchDragEl   = card;
     card.classList.add('touch-dragging');
   }, { passive: true });
 
   card.addEventListener('touchmove', e => {
-    if (touchDragEl === null) return;
+    if (!touchDragEl) return;
     e.preventDefault();
-    const touch = e.touches[0];
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const targetCard = el ? el.closest('.photo-card[data-idx]') : null;
-    // Limpiar highlight previo
-    document.querySelectorAll('.photo-card').forEach(c => c.classList.remove('touch-over'));
-    if (targetCard && targetCard !== touchDragEl) {
-      touchOverIdx = parseInt(targetCard.dataset.idx);
-      targetCard.classList.add('touch-over');
+    const t = e.touches[0];
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    document.querySelectorAll('.photo-card,.photo-empty-slot').forEach(c => {
+      c.classList.remove('touch-over');
+      if (c.classList.contains('photo-empty-slot')) {
+        c.style.borderColor = 'var(--border)';
+        c.style.background  = 'var(--bg)';
+      }
+    });
+    const tc = el?.closest('.photo-card[data-page-idx]');
+    const te = el?.closest('.photo-empty-slot');
+    if (tc && tc !== touchDragEl) {
+      touchOverEl = tc; tc.classList.add('touch-over');
+    } else if (te) {
+      touchOverEl = te;
+      te.style.borderColor = 'var(--accent)';
+      te.style.background  = 'rgba(249,115,22,.07)';
     } else {
-      touchOverIdx = null;
+      touchOverEl = null;
     }
   }, { passive: false });
 
   card.addEventListener('touchend', () => {
     if (touchDragEl) touchDragEl.classList.remove('touch-dragging');
-    document.querySelectorAll('.photo-card').forEach(c => c.classList.remove('touch-over'));
-    if (touchDragIdx !== null && touchOverIdx !== null && touchDragIdx !== touchOverIdx) {
-      const moved = photos.splice(touchDragIdx, 1)[0];
-      photos.splice(touchOverIdx, 0, moved);
-      renderOrderGrid();
+    document.querySelectorAll('.photo-card,.photo-empty-slot').forEach(c => {
+      c.classList.remove('touch-over');
+      if (c.classList.contains('photo-empty-slot')) {
+        c.style.borderColor = 'var(--border)';
+        c.style.background  = 'var(--bg)';
+      }
+    });
+    if (touchDragPage !== null && touchOverEl) {
+      const tp = parseInt(touchOverEl.dataset.pageIdx);
+      const ts = parseInt(touchOverEl.dataset.slot);
+      if (!isNaN(tp) && !isNaN(ts)) movePhotoLayout(touchDragPage, touchDragSlot, tp, ts);
     }
-    touchDragIdx = null; touchDragEl = null; touchOverIdx = null;
+    touchDragPage = null; touchDragSlot = null; touchDragEl = null; touchOverEl = null;
   });
-}
-
-function movePhoto(idx, direction) {
-  const newIdx = idx + direction;
-  if (newIdx < 0 || newIdx >= photos.length) return;
-  const tmp = photos[idx];
-  photos[idx] = photos[newIdx];
-  photos[newIdx] = tmp;
-  renderOrderGrid();
 }
 
 // ══════════════════════════════════════════════════
@@ -1326,7 +1516,7 @@ function renderPDFPreview() {
     ['Peso colada', `${data.pesoColada} g × ${data.cantColada} unid.`],
     ['Conexiones de agua', data.agua],
     ['Imagen pieza', data.piezaImg ? '✓ Cargada' : 'Sin imagen'],
-    ['Fotos', `${photos.length} foto(s) — ${Math.ceil(photos.length / 4)} hoja(s) de fotos`],
+    ['Fotos', `${photos.length} foto(s) — ${getPhotoPages().length} hoja(s) de fotos`],
     ['Observación pieza', data.observacion || '—'],
     ['Observación molde', data.observacionMolde || '—'],
   ];
@@ -1449,8 +1639,8 @@ async function generatePDF() {
   }
 
   // ── TOTAL DE PÁGINAS ──
-  const photoPages = photos.length > 0 ? Math.ceil(photos.length / 4) : 0;
-  const totalPages = 1 + photoPages;
+  const photoPages = getPhotoPages();
+  const totalPages = 1 + photoPages.length;
 
   // ══════════════════════════════
   //  PÁGINA 1 — DATOS
@@ -1607,90 +1797,73 @@ async function generatePDF() {
   pageFooter();
 
   // ══════════════════════════════
-  //  PÁGINAS DE FOTOS
-  //  4 fotos por hoja, respetando
-  //  el aspect ratio de cada imagen
+  //  PÁGINAS DE FOTOS — grilla 2×2 fija
+  //  Las celdas sin foto quedan vacías (fondo gris)
   // ══════════════════════════════
-  // Nombres editables de cada hoja de fotos
-  const pageNames = window._photoPageNames || [];
+  const pageNames   = window._photoPageNames || [];
+  const pagesData   = getPhotoPages();
 
-  for (let pi = 0; pi < photoPages; pi++) {
-    updateLoadingMsg(`Procesando fotos (${pi + 1}/${photoPages})…`);
+  for (let pi = 0; pi < pagesData.length; pi++) {
+    updateLoadingMsg(`Procesando fotos (${pi + 1}/${pagesData.length})…`);
     doc.addPage();
     pageBackground();
     pageHeader(pageNames[pi] || `Hoja ${pi + 1}`, pi + 2, totalPages);
     pageFooter();
 
+    const pagePhotos = pagesData[pi];
     const pageObs = (window._photoPageObs && window._photoPageObs[pi]) ? window._photoPageObs[pi].trim() : '';
 
-    // Reservar espacio al pie si hay observaciones
     const obsBoxH   = pageObs ? Math.min(28, 8 + doc.splitTextToSize(pageObs, W - margin * 2 - 8).length * 5) : 0;
     const obsMargin = pageObs ? obsBoxH + 6 : 0;
 
-    const startIdx = pi * 4;
-    const pagePhotos = photos.slice(startIdx, startIdx + 4);
+    // Grilla 2×2 siempre fija
+    const gap     = 5;
+    const areaTop = 28;
+    const areaBot = H - 14 - obsMargin;
+    const areaW   = W - margin * 2;
+    const areaH   = areaBot - areaTop;
+    const cellW   = (areaW - gap) / 2;
+    const cellH   = (areaH - gap) / 2;
 
-    // Grilla fija 2×2 — 4 posiciones siempre iguales
-    // Las fotos se ubican cada una en su celda respetando aspect ratio
-    const gap   = 5;   // mm entre celdas
-    const areaTop = 28, areaBot = H - 14 - obsMargin;
-    const areaW = W - margin * 2;
-    const areaH = areaBot - areaTop;
-    const cellW = (areaW - gap) / 2;
-    const cellH = (areaH - gap) / 2;
-
-    // Posiciones fijas de las 4 celdas (col, row)
     const cells = [
-      { x: margin,              y: areaTop },
-      { x: margin + cellW + gap, y: areaTop },
-      { x: margin,              y: areaTop + cellH + gap },
+      { x: margin,              y: areaTop               },
+      { x: margin + cellW + gap, y: areaTop               },
+      { x: margin,              y: areaTop + cellH + gap  },
       { x: margin + cellW + gap, y: areaTop + cellH + gap },
     ];
 
-    for (let j = 0; j < pagePhotos.length; j++) {
-      const cell = cells[j];
-      const photo = pagePhotos[j];
+    for (let j = 0; j < 4; j++) {
+      const cell  = cells[j];
+      const photo = pagePhotos[j]; // puede ser undefined
 
-      // La corrección EXIF ya se hizo al importar la foto,
-      // solo aplicar rotación manual del usuario si la hay
-      let imgData = photo.dataUrl;
-      if (photo.rotation !== 0) {
-        imgData = await rotateImageData(photo.dataUrl, photo.rotation);
-      }
-
-      // Dimensiones reales post-rotación para aspect ratio correcto
-      const dims = await getImageDimensions(imgData);
-      const imgAR   = dims.width / dims.height;
-      const cellAR  = cellW / cellH;
-
-      let drawW, drawH;
-      if (imgAR > cellAR) {
-        // más ancha que la celda → ajustar por ancho
-        drawW = cellW;
-        drawH = cellW / imgAR;
-      } else {
-        // más alta que la celda → ajustar por alto
-        drawH = cellH;
-        drawW = cellH * imgAR;
-      }
-
-      // Centrar en la celda
-      const drawX = cell.x + (cellW - drawW) / 2;
-      const drawY = cell.y + (cellH - drawH) / 2;
-
-      // Fondo de celda
+      // Fondo de celda siempre
       doc.setFillColor(...cLight);
       doc.rect(cell.x, cell.y, cellW, cellH, 'F');
 
-      try {
-        doc.addImage(imgData, 'JPEG', drawX, drawY, drawW, drawH, '', 'FAST');
-      } catch (e) {
-        doc.setFontSize(8);
-        doc.setTextColor(...cMid);
-        doc.text('Error al cargar imagen', cell.x + cellW/2, cell.y + cellH/2, { align: 'center' });
+      if (photo) {
+        let imgData = photo.dataUrl;
+        if (photo.rotation !== 0) imgData = await rotateImageData(photo.dataUrl, photo.rotation);
+
+        const dims  = await getImageDimensions(imgData);
+        const imgAR = dims.width / dims.height;
+        const celAR = cellW / cellH;
+
+        let drawW, drawH;
+        if (imgAR > celAR) { drawW = cellW; drawH = cellW / imgAR; }
+        else               { drawH = cellH; drawW = cellH * imgAR; }
+
+        const drawX = cell.x + (cellW - drawW) / 2;
+        const drawY = cell.y + (cellH - drawH) / 2;
+
+        try {
+          doc.addImage(imgData, 'JPEG', drawX, drawY, drawW, drawH, '', 'FAST');
+        } catch (e) {
+          doc.setFontSize(8); doc.setTextColor(...cMid);
+          doc.text('Error al cargar imagen', cell.x + cellW / 2, cell.y + cellH / 2, { align: 'center' });
+        }
       }
 
-      // Borde sutil
+      // Borde siempre
       doc.setDrawColor(...cBorder);
       doc.setLineWidth(0.3);
       doc.rect(cell.x, cell.y, cellW, cellH, 'S');
