@@ -20,8 +20,8 @@
     --surface:  #161b22;
     --card:     #1c2230;
     --border:   #2a3244;
-    --accent:   #f97316;
-    --accent2:  #fb923c;
+    --accent:   #e76e17;
+    --accent2:  #f38d3a;
     --text:     #e2e8f0;
     --muted:    #7a8799;
     --ok:       #22c55e;
@@ -724,7 +724,7 @@
     </div>
 
     <div class="callout">
-      Arrastrá las fotos para cambiar su orden. Girá individualmente con el botón 🔄. Se distribuyen <strong>4 fotos por hoja A4</strong>. Puedes cambiar el nombre de las ojas y agregar observaciones.
+      Arrastrá las fotos para cambiar su orden. Girá individualmente con el botón 🔄. Se distribuyen <strong>4 fotos por hoja A4</strong>. Puedes cambiar el nombre de las hojas y agregar observaciones.
     </div>
 
     <!-- <div class="drag-hint">↑↓ Usá las flechas para reordenar · También podés arrastrar la foto · 🔄 para rotar</div> -->
@@ -1388,7 +1388,7 @@ function renderOrderGrid() {
     obsLabel.style.cssText = 'display:block;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);margin-bottom:4px;';
 
     const obsTA = document.createElement('textarea');
-    obsTA.placeholder = 'Notas de proceso, ajustes, etc. (aparece al pie del PDF)';
+    obsTA.placeholder = 'Notas de proceso, ajustes, etc...';
     obsTA.rows = 2;
     obsTA.value = window._photoPageObs[pageIdx] !== undefined ? window._photoPageObs[pageIdx] : '';
     obsTA.style.cssText = [
