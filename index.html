@@ -364,7 +364,7 @@
     background: rgba(249,115,22,.12); border: 1px solid rgba(249,115,22,.3);
     color: var(--accent); border-radius: 20px;
     font-size: 12px; font-weight: 600; padding: 3px 10px;
-    margin-bottom: 16px;
+    margin-top: 16px; margin-bottom: 16px;
   }
 
   /* pdf preview */
@@ -672,11 +672,11 @@
   <div class="section" id="sec-1">
     <div class="section-title">
       <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-      Fotos de pantallas
+      Fotos del proceso
     </div>
 
     <div class="callout">
-      Tomá fotos de las pantallas de la máquina. Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
+      Tomá fotos de las pantallas de la máquina, molde, defectos de la pieza, detalles utiles del proceso, etc.. . Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
     </div>
 
     <!-- DOS botones: cámara directa y galería independientes -->
@@ -906,19 +906,27 @@ document.addEventListener('DOMContentLoaded', () => {
 // Imagen de la pieza
 let piezaImgData     = null;  // dataUrl original (EXIF corregido)
 let piezaImgRotation = 0;     // rotación manual acumulada
+let piezaImgMime     = 'image/jpeg'; // tipo original del archivo
 
 function handlePiezaImg(e) {
   const files = Array.from(e.target.files);
   e.target.value = '';
   if (!files.length) return;
+  const file = files[0];
+  piezaImgMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
   const reader = new FileReader();
   reader.onload = async ev => {
-    const corrected  = await correctExifOrientation(ev.target.result);
-    piezaImgData     = await resizeAndCompress(corrected, 1200, 0.78);
+    const corrected = await correctExifOrientation(ev.target.result);
+    // PNG: mantener canal alfa, sin convertir a JPEG
+    if (piezaImgMime === 'image/png') {
+      piezaImgData = await resizeAndCompressPng(corrected, 1200);
+    } else {
+      piezaImgData = await resizeAndCompress(corrected, 1200, 0.78);
+    }
     piezaImgRotation = 0;
     renderPiezaImg();
   };
-  reader.readAsDataURL(files[0]);
+  reader.readAsDataURL(file);
 }
 
 function renderPiezaImg() {
@@ -1002,8 +1010,27 @@ function resizeAndCompress(dataUrl, maxPx, quality) {
   });
 }
 
-// ──────────────────────────────────────────────────
-//  CORRECCIÓN EXIF
+// Versión para PNG: preserva canal alfa (sin fondo)
+function resizeAndCompressPng(dataUrl, maxPx) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxPx || h > maxPx) {
+        const ratio = Math.min(maxPx / w, maxPx / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      // NO rellenar fondo — mantener transparencia
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
 //  Android guarda las fotos en orientación del sensor
 //  con la rotación codificada en el tag EXIF 0x0112.
 //  Lo leemos manualmente de los bytes JPEG y
@@ -1704,7 +1731,7 @@ async function generatePDF() {
     doc.setDrawColor(...cBorder);
     doc.setLineWidth(0.3);
     doc.roundedRect(W - margin - imgSize, 27, imgSize, imgSize, 3, 3, 'S');
-    try { doc.addImage(piezaImgFinal, 'JPEG', px, py, pw, ph, '', 'FAST'); } catch(e) {}
+    try { doc.addImage(piezaImgFinal, piezaImgMime === 'image/png' ? 'PNG' : 'JPEG', px, py, pw, ph, '', 'FAST'); } catch(e) {}
     doc.setFontSize(6);
     doc.setTextColor(...cMid);
     doc.text('PIEZA', W - margin - imgSize/2, 27 + imgSize + 4, { align: 'center' });
