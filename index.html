@@ -1967,6 +1967,13 @@ function rotateImageData(dataUrl, degrees) {
       ctx.rotate(deg * Math.PI / 180);
       ctx.drawImage(img, -w / 2, -h / 2);
       resolve(canvas.toDataURL('image/jpeg', 0.78));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function getImageDimensions(dataUrl) {
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
