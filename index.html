@@ -475,17 +475,17 @@
     <div class="form-grid">
 
       <div class="field">
-        <label>Responsable</label>
+        <label>Responsable <span style="color:var(--text)">*</span></label>
         <input type="text" id="responsable" placeholder="Responsable del reporte">
       </div>
 
       <div class="form-row">
         <div class="field">
-          <label>Fecha</label>
+          <label>Fecha <span style="color:var(--text)">*</span></label>
           <input type="date" id="fecha">
         </div>
         <div class="field">
-          <label>Máquina</label>
+          <label>Máquina <span style="color:var(--text)">*</span></label>
           <input type="text" id="maquina" placeholder="Ej: 701">
         </div>
       </div>
@@ -522,7 +522,7 @@
 
       <!-- Molde + Producto en una sola línea -->
       <div class="field">
-        <label>Molde — Descripción del producto</label>
+        <label>Molde — Descripción del producto <span style="color:var(--text)">*</span></label>
         <div style="display:flex;align-items:center;gap:6px">
           <input type="text" id="molde" placeholder="Código" style="flex:0 0 90px;min-width:0">
           <span style="color:var(--muted);font-size:18px;line-height:1;flex-shrink:0">—</span>
@@ -531,7 +531,7 @@
       </div>
 
       <div class="field">
-        <label>Materia Prima</label>
+        <label>Materia Prima <span style="color:var(--text)">*</span></label>
         <input type="text" id="materiaPrima" placeholder="Ej: PP Homopolímero">
       </div>
 
@@ -672,11 +672,11 @@
   <div class="section" id="sec-1">
     <div class="section-title">
       <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-      Fotos del proceso
+      Fotos de pantallas
     </div>
 
     <div class="callout">
-      Tomá fotos de las pantallas de la máquina, molde, defectos de la pieza, detalles utiles del proceso, etc.. . Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
+      Tomá fotos de las pantallas de la máquina. Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
     </div>
 
     <!-- DOS botones: cámara directa y galería independientes -->
@@ -818,10 +818,22 @@ function goToStep(step) {
 //  VALIDATION
 // ══════════════════════════════════════════════════
 function validateStep0() {
-  const molde = document.getElementById('molde').value.trim();
-  const maquina = document.getElementById('maquina').value.trim();
-  if (!molde) { showToast('Ingresá el nombre del molde', true); return false; }
-  if (!maquina) { showToast('Ingresá la máquina', true); return false; }
+  const fields = [
+    { id: 'responsable',  msg: 'Ingresá el responsable' },
+    { id: 'fecha',        msg: 'Ingresá la fecha' },
+    { id: 'maquina',      msg: 'Ingresá la máquina' },
+    { id: 'molde',        msg: 'Ingresá el nombre del molde' },
+    { id: 'producto',     msg: 'Ingresá la descripción del producto' },
+    { id: 'materiaPrima', msg: 'Ingresá la materia prima' },
+  ];
+  for (const f of fields) {
+    const el = document.getElementById(f.id);
+    if (!el || !el.value.trim()) {
+      showToast(f.msg, true);
+      el && el.focus();
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1630,17 +1642,39 @@ async function generatePDF() {
   function pageBackground() {
     doc.setFillColor(...cWhite);
     doc.rect(0, 0, W, H, 'F');
-    // franja superior naranja
+
+    // Franja naranja completa de 9mm
     doc.setFillColor(...cOrange);
     doc.rect(0, 0, W, 9, 'F');
-    // logo Macroplast — centrado en la franja naranja, extremo derecho
+
+    // Zona blanca para el logo (sobre el naranja)
+    const logoH    = 7.5;
+    const logoW    = logoH * (window._logoAR || 1.15);
+    const zoneW    = logoW + margin * 2 + 2;  // ancho zona blanca
+    const chevronW = 4;                        // ancho del pico del chevron
+
+    // Rectángulo blanco izquierdo
+    doc.setFillColor(...cWhite);
+    doc.rect(0, 0, zoneW, 9, 'F');
+
+    // Chevron: triángulo blanco que apunta a la derecha
+    // Vértices: (zoneW, 0) → (zoneW + chevronW, 4.5) → (zoneW, 9)
+    doc.setFillColor(...cWhite);
+    doc.triangle(zoneW, 0, zoneW + chevronW, 4.5, zoneW, 9, 'F');
+
+    // Logo centrado verticalmente en la zona blanca
     if (window._logoBase64) {
-      const logoH = 7.5;
-      const logoW = logoH * (window._logoAR || 1);
-      const lX = W - margin - logoW;
+      const lX = margin;
       const lY = (9 - logoH) / 2;
       try { doc.addImage(window._logoBase64, 'PNG', lX, lY, logoW, logoH, '', 'FAST'); } catch(e) {}
     }
+
+    // Texto FM + Fecha a la derecha sobre naranja
+    const fmText = 'FM. 00-00 V. 00. Fecha: 12/06/26';
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(255, 255, 255);
+    doc.text(fmText, W - margin, 5.2, { align: 'right' });
   }
 
   function pageHeader(title, pageNum, totalPages) {
