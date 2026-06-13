@@ -533,7 +533,7 @@
 
       <div class="field">
         <label>Materia Prima <span style="color:var(--text)">*</span></label>
-        <input type="text" id="materiaPrima" placeholder="Ej: PP Homopolímero">
+        <input type="text" id="materiaPrima" placeholder="Ej: H + Ocre 4%">
       </div>
 
       <!-- Peso pieza -->
@@ -2047,34 +2047,7 @@ function closeConfirmModal() {
 }
 
 function confirmarNuevoRegistro() {
-  closeConfirmModal();
-  // Resetear fotos
-  photos.length = 0;
-  window._pageLayout     = [];
-  window._photoPageNames = [];
-  window._photoPageObs   = [];
-  // Resetear imagen de pieza
-  piezaImgData     = null;
-  piezaImgRotation = 0;
-  piezaImgMime     = 'image/jpeg';
-  // Resetear formulario
-  document.querySelectorAll('#sec-0 input, #sec-0 select, #sec-0 textarea').forEach(el => {
-    if (el.type === 'checkbox') el.checked = false;
-    else if (el.type === 'number') el.value = el.defaultValue || 0;
-    else el.value = '';
-  });
-  document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
-  // Resetear agua
-  document.querySelectorAll('.agua-btn').forEach(b => b.classList.remove('selected'));
-  document.querySelectorAll('.pct-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('aguaCustom').value = '';
-  // Resetear imagen de pieza en UI
-  const piezaWrap = document.getElementById('piezaImgWrap');
-  if (piezaWrap) piezaWrap.innerHTML = '';
-  // Ocultar botón nuevo registro
-  document.getElementById('newRegisterWrap').style.display = 'none';
-  // Volver al paso 1
-  goToStep(0);
+  window.location.reload();
 }
 
 // ══════════════════════════════════════════════════
