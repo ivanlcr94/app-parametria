@@ -38,6 +38,7 @@
     font-family: 'Barlow', sans-serif;
     font-size: 15px;
     -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none; /* deshabilita pull-to-refresh en móvil */
   }
 
   body::-webkit-scrollbar {
@@ -758,6 +759,12 @@
         Descargar PDF
       </button>
     </div>
+
+    <div id="newRegisterWrap" style="display:none;margin-top:16px;text-align:center;">
+      <button class="btn btn-secondary" style="width:100%;border-style:dashed;opacity:.85" onclick="nuevoRegistro()">
+        ＋ Comenzar nuevo registro
+      </button>
+    </div>
   </div>
 
 </main>
@@ -888,6 +895,17 @@ function getAguaValues() {
 //  - inputGaleria: sin capture → abre galería/picker
 //  - Corrección EXIF automática en ambos casos
 // ══════════════════════════════════════════════════
+// ── Deshabilitar pull-to-refresh en móvil ──
+let _lastTouchY = 0;
+document.addEventListener('touchstart', e => {
+  _lastTouchY = e.touches[0].clientY;
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  const dy = e.touches[0].clientY - _lastTouchY;
+  const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+  if (dy > 0 && scrollTop === 0) e.preventDefault();
+}, { passive: false });
+
 document.addEventListener('DOMContentLoaded', () => {
   // Fecha de hoy por defecto
   document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
@@ -2003,6 +2021,39 @@ async function generatePDF() {
   doc.save(filename);
   hideLoading();
   showToast(`PDF "${filename}" descargado ✓`);
+  // Mostrar botón nuevo registro
+  document.getElementById('newRegisterWrap').style.display = 'block';
+}
+
+function nuevoRegistro() {
+  if (!confirm('¿Comenzar un nuevo registro? Se borrarán todos los datos actuales.')) return;
+  // Resetear fotos
+  photos.length = 0;
+  window._pageLayout     = [];
+  window._photoPageNames = [];
+  window._photoPageObs   = [];
+  // Resetear imagen de pieza
+  piezaImgData     = null;
+  piezaImgRotation = 0;
+  piezaImgMime     = 'image/jpeg';
+  // Resetear formulario
+  document.querySelectorAll('#sec-0 input, #sec-0 select, #sec-0 textarea').forEach(el => {
+    if (el.type === 'checkbox') el.checked = false;
+    else if (el.type === 'number') el.value = el.defaultValue || 0;
+    else el.value = '';
+  });
+  document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
+  // Resetear agua
+  document.querySelectorAll('.agua-btn').forEach(b => b.classList.remove('selected'));
+  document.querySelectorAll('.pct-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('aguaCustom').value = '';
+  // Resetear imagen de pieza en UI
+  const piezaWrap = document.getElementById('piezaImgWrap');
+  if (piezaWrap) piezaWrap.innerHTML = '';
+  // Ocultar botón nuevo registro
+  document.getElementById('newRegisterWrap').style.display = 'none';
+  // Volver al paso 1
+  goToStep(0);
 }
 
 // ══════════════════════════════════════════════════
