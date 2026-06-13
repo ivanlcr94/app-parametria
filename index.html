@@ -533,7 +533,7 @@
 
       <div class="field">
         <label>Materia Prima <span style="color:var(--text)">*</span></label>
-        <input type="text" id="materiaPrima" placeholder="Ej: H + Ocre 4%">
+        <input type="text" id="materiaPrima" placeholder="Ej: PP Homopolímero">
       </div>
 
       <!-- Peso pieza -->
@@ -776,6 +776,19 @@
     <div class="modal-btns">
       <button class="btn btn-danger" onclick="rejectPhoto()">🗑 Eliminar</button>
       <button class="btn btn-ok"     onclick="acceptPhoto()">✓ Aceptar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal confirmación nuevo registro -->
+<div class="modal-overlay" id="confirmModal" style="display:none" onclick="closeConfirmModal()">
+  <div class="modal" style="max-width:320px;text-align:center;padding:28px 24px;gap:0" onclick="event.stopPropagation()">
+    <div style="font-size:32px;margin-bottom:12px">🗂️</div>
+    <h3 style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:8px">Nuevo registro</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.5">Se borrarán todos los datos y fotos del registro actual. Esta acción no se puede deshacer.</p>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeConfirmModal()">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1;background:var(--danger);border-color:var(--danger)" onclick="confirmarNuevoRegistro()">Borrar y continuar</button>
     </div>
   </div>
 </div>
@@ -2026,7 +2039,15 @@ async function generatePDF() {
 }
 
 function nuevoRegistro() {
-  if (!confirm('¿Comenzar un nuevo registro? Se borrarán todos los datos actuales.')) return;
+  document.getElementById('confirmModal').style.display = 'flex';
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+function confirmarNuevoRegistro() {
+  closeConfirmModal();
   // Resetear fotos
   photos.length = 0;
   window._pageLayout     = [];
