@@ -1042,7 +1042,12 @@ async function openLiveCamera() {
   const video = document.getElementById('liveCameraVideo');
   try {
     liveCameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      video: {
+        facingMode: 'environment',
+        width:  { ideal: 1600 },
+        height: { ideal: 1200 },
+        aspectRatio: { ideal: 4 / 3 }
+      },
       audio: false
     });
     video.srcObject = liveCameraStream;
@@ -1079,46 +1084,22 @@ async function captureLivePhoto() {
   // Si el dispositivo está en vertical pero el frame es horizontal (vw > vh), hay que rotar 90°.
   const needsRotation = isPortraitDevice && vw > vh;
 
-  // ── Paso 1: dibujar el frame ya orientado en un canvas temporal ──
-  const tmp = document.createElement('canvas');
-  const tctx = tmp.getContext('2d');
+  // El stream ya se pidió en 4:3 (aspectRatio constraint) — solo corregimos orientación,
+  // sin recortar nada: lo que se ve en pantalla es exactamente lo que se guarda.
   if (needsRotation) {
-    tmp.width  = vh;
-    tmp.height = vw;
-    tctx.save();
-    tctx.translate(tmp.width / 2, tmp.height / 2);
-    tctx.rotate(90 * Math.PI / 180);
-    tctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
-    tctx.restore();
+    canvas.width  = vh;
+    canvas.height = vw;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(90 * Math.PI / 180);
+    ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
+    ctx.restore();
   } else {
-    tmp.width  = vw;
-    tmp.height = vh;
-    tctx.drawImage(video, 0, 0, vw, vh);
+    canvas.width  = vw;
+    canvas.height = vh;
+    canvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
   }
-
-  // ── Paso 2: recortar al centro respetando proporción 4:3 ──
-  const srcW = tmp.width, srcH = tmp.height;
-  const targetRatio = isPortraitDevice ? 3 / 4 : 4 / 3; // vertical → 3:4, horizontal → 4:3
-  const srcRatio = srcW / srcH;
-
-  let cropW, cropH, cropX, cropY;
-  if (srcRatio > targetRatio) {
-    // imagen más ancha que el objetivo → recortar los costados
-    cropH = srcH;
-    cropW = srcH * targetRatio;
-    cropX = (srcW - cropW) / 2;
-    cropY = 0;
-  } else {
-    // imagen más alta que el objetivo → recortar arriba/abajo
-    cropW = srcW;
-    cropH = srcW / targetRatio;
-    cropX = 0;
-    cropY = (srcH - cropH) / 2;
-  }
-
-  canvas.width  = Math.round(cropW);
-  canvas.height = Math.round(cropH);
-  canvas.getContext('2d').drawImage(tmp, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
 
   const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
