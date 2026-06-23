@@ -769,9 +769,12 @@
 <!-- Modal cámara en vivo (fotos seguidas) -->
 <div class="modal-overlay" id="liveCameraModal" style="display:none;background:#000;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0">
   <div style="position:relative;flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000">
-    <video id="liveCameraVideo" autoplay playsinline style="width:100%;height:100%;object-fit:contain"></video>
+    <video id="liveCameraVideo" autoplay playsinline style="width:100%;height:100%;object-fit:contain;transform:rotate(0deg);transition:transform .2s"></video>
     <canvas id="liveCameraCanvas" style="display:none"></canvas>
     <div id="liveCameraFlash" style="position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .15s"></div>
+
+    <!-- Botón rotar vista (corrige orientación si sale mal) -->
+    <button onclick="rotateLiveView()" style="position:absolute;top:16px;right:16px;background:rgba(255,255,255,.15);border:none;color:#fff;width:42px;height:42px;border-radius:50%;font-size:18px;cursor:pointer;z-index:3">🔄</button>
 
     <!-- Preview de confirmación tras cada captura -->
     <div id="liveCapturePreview" style="display:none;position:absolute;inset:0;background:#000;flex-direction:column;align-items:center;justify-content:center;z-index:5">
@@ -1036,10 +1039,18 @@ async function getPiezaImgFinal() {
 // ══════════════════════════════════════════════════
 let liveCameraStream = null;
 let _liveCapturePending = null;
+let _liveViewRotation = 0; // 0, 90, 180, 270 — rotación manual de la vista en vivo
+
+function rotateLiveView() {
+  _liveViewRotation = (_liveViewRotation + 90) % 360;
+  document.getElementById('liveCameraVideo').style.transform = `rotate(${_liveViewRotation}deg)`;
+}
 
 async function openLiveCamera() {
   const modal = document.getElementById('liveCameraModal');
   const video = document.getElementById('liveCameraVideo');
+  _liveViewRotation = 0;
+  video.style.transform = 'rotate(0deg)';
   try {
     liveCameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -1062,7 +1073,9 @@ function closeLiveCamera() {
   const modal = document.getElementById('liveCameraModal');
   modal.style.display = 'none';
   document.getElementById('liveCapturePreview').style.display = 'none';
+  document.getElementById('liveCameraVideo').style.transform = 'rotate(0deg)';
   _liveCapturePending = null;
+  _liveViewRotation = 0;
   if (liveCameraStream) {
     liveCameraStream.getTracks().forEach(t => t.stop());
     liveCameraStream = null;
@@ -1076,11 +1089,22 @@ async function captureLivePhoto() {
   const canvas = document.getElementById('liveCameraCanvas');
   if (!video.videoWidth) return;
 
-  // El navegador ya entrega el frame del <video> correctamente orientado
-  // (es exactamente lo que se ve en pantalla) — no hay que rotar ni recortar nada.
-  canvas.width  = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const rot = _liveViewRotation;
+
+  if (rot === 90 || rot === 270) {
+    canvas.width  = vh;
+    canvas.height = vw;
+  } else {
+    canvas.width  = vw;
+    canvas.height = vh;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(rot * Math.PI / 180);
+  ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
+  ctx.restore();
 
   const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
