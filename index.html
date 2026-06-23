@@ -321,7 +321,7 @@
   }
   .photo-card:active { cursor: grabbing; }
   .photo-card.drag-over { border-color: var(--accent); transform: scale(1.02); }
-  .photo-card img { width: 100%; max-height: 260px; min-height: 120px; object-fit: contain; display: block; background: #0d1117; }
+  .photo-card img { width: 100%; height: 280px; object-fit: contain; display: block; background: #0d1117; }
   .photo-card .photo-actions {
     position: absolute; top: 6px; right: 6px;
     display: flex; gap: 5px;
@@ -1076,30 +1076,11 @@ async function captureLivePhoto() {
   const canvas = document.getElementById('liveCameraCanvas');
   if (!video.videoWidth) return;
 
-  const vw = video.videoWidth, vh = video.videoHeight;
-
-  // Detectar orientación física del dispositivo
-  const isPortraitDevice = window.matchMedia('(orientation: portrait)').matches;
-  // El sensor de la cámara entrega el frame en su orientación nativa (casi siempre horizontal).
-  // Si el dispositivo está en vertical pero el frame es horizontal (vw > vh), hay que rotar 90°.
-  const needsRotation = isPortraitDevice && vw > vh;
-
-  // El stream ya se pidió en 4:3 (aspectRatio constraint) — solo corregimos orientación,
-  // sin recortar nada: lo que se ve en pantalla es exactamente lo que se guarda.
-  if (needsRotation) {
-    canvas.width  = vh;
-    canvas.height = vw;
-    const ctx = canvas.getContext('2d');
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(90 * Math.PI / 180);
-    ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
-    ctx.restore();
-  } else {
-    canvas.width  = vw;
-    canvas.height = vh;
-    canvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
-  }
+  // El navegador ya entrega el frame del <video> correctamente orientado
+  // (es exactamente lo que se ve en pantalla) — no hay que rotar ni recortar nada.
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
