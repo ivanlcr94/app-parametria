@@ -39,6 +39,22 @@
     font-size: 15px;
     -webkit-font-smoothing: antialiased;
     overscroll-behavior-y: none; /* deshabilita pull-to-refresh en móvil */
+    -webkit-touch-callout: none;  /* evita el menú "copiar/buscar en Google" al mantener presionado */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Permitir selección normal en campos donde el usuario escribe */
+  input, textarea {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  img {
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+    pointer-events: auto;
   }
 
   body::-webkit-scrollbar {
@@ -938,6 +954,12 @@ document.addEventListener('touchmove', e => {
   const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
   if (dy > 0 && scrollTop === 0) e.preventDefault();
 }, { passive: false });
+
+// Bloquear menú contextual (mantener presionado) salvo en campos de texto
+document.addEventListener('contextmenu', e => {
+  const tag = e.target.tagName;
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA') e.preventDefault();
+});
 
 document.addEventListener('DOMContentLoaded', () => {
   // Fecha de hoy por defecto
