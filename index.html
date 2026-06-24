@@ -964,10 +964,8 @@ document.addEventListener('contextmenu', e => {
 document.addEventListener('DOMContentLoaded', () => {
   // Fecha de hoy por defecto
   document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
-  // Vincular inputs de cámara y galería (fotos de máquina)
-  const cam = document.getElementById('inputCamara');
+  // Vincular input de galería (fotos de máquina)
   const gal = document.getElementById('inputGaleria');
-  if (cam) cam.addEventListener('change', handleFileInput);
   if (gal) gal.addEventListener('change', handleFileInput);
   // Vincular inputs de imagen de pieza
   const pc = document.getElementById('piezaImgCam');
@@ -986,6 +984,11 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   logoImg.onerror = () => { window._logoBase64 = null; window._logoAR = 1; };
   logoImg.src = 'logo_macroplast.png';
+
+  // Restaurar progreso guardado, si existe (al final, cuando ya cargó todo)
+  restoreSavedProgress();
+  // Activar autoguardado de cambios en el formulario
+  initAutoSave();
 });
 
 // Imagen de la pieza
@@ -2171,6 +2174,7 @@ function closeConfirmModal() {
 }
 
 function confirmarNuevoRegistro() {
+  clearSavedProgress();
   window.location.reload();
 }
 
@@ -2269,6 +2273,148 @@ function installPWA() {
     document.getElementById('installBanner').style.display = 'none';
   });
 }
+
+// ══════════════════════════════════════════════════
+//  PERSISTENCIA LOCAL — guarda el progreso del
+//  registro en localStorage hasta que se descargue
+//  el PDF o se inicie un registro nuevo
+// ══════════════════════════════════════════════════
+const STORAGE_KEY = 'parametria_progress_v1';
+let _saveTimer = null;
+
+function snapshotProgress() {
+  // Campos del formulario (paso 1) — cualquier input/select/textarea con id dentro de #sec-0
+  const formData = {};
+  document.querySelectorAll('#sec-0 [id]').forEach(el => {
+    if (!el.id) return;
+    if (el.type === 'checkbox') formData[el.id] = el.checked;
+    else formData[el.id] = el.value;
+  });
+
+  // Agua: estado de cada .agua-item (seleccionado + porcentaje)
+  const aguaState = [...document.querySelectorAll('.agua-item')].map(el => ({
+    val: el.dataset.val,
+    selected: el.classList.contains('selected'),
+    pct: el.dataset.pct || null,
+  }));
+
+  return {
+    currentStep,
+    formData,
+    aguaState,
+    photos,
+    pageLayout:     window._pageLayout || [],
+    photoPageNames: window._photoPageNames || [],
+    photoPageObs:   window._photoPageObs || [],
+    piezaImgData,
+    piezaImgRotation,
+    piezaImgMime,
+    savedAt: Date.now(),
+  };
+}
+
+function saveProgressNow() {
+  try {
+    const snap = snapshotProgress();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
+  } catch (e) {
+    // Si se llena el storage (fotos muy pesadas) fallar silenciosamente
+    console.warn('No se pudo guardar el progreso:', e);
+  }
+}
+
+function scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveProgressNow, 500);
+}
+
+function clearSavedProgress() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+}
+
+function restoreSavedProgress() {
+  let raw;
+  try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { return; }
+  if (!raw) return;
+
+  let snap;
+  try { snap = JSON.parse(raw); } catch (e) { return; }
+  if (!snap || typeof snap !== 'object') return;
+
+  // Si no hay nada sustancial guardado, no molestar con el aviso
+  const hasContent = (snap.photos && snap.photos.length) ||
+    Object.values(snap.formData || {}).some(v => v && v !== '');
+  if (!hasContent) return;
+
+  // Restaurar campos del formulario
+  Object.entries(snap.formData || {}).forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!val;
+    else el.value = val;
+  });
+
+  // Restaurar agua
+  (snap.aguaState || []).forEach(state => {
+    const el = [...document.querySelectorAll('.agua-item')].find(e => e.dataset.val === state.val);
+    if (!el) return;
+    if (state.selected) el.classList.add('selected'); else el.classList.remove('selected');
+    if (state.pct) {
+      el.dataset.pct = state.pct;
+      const btns = el.querySelectorAll('.pct-btn');
+      btns.forEach(b => b.classList.remove('active'));
+      const target = state.pct === 'sin-agua'
+        ? el.querySelector('.pct-btn')
+        : [...btns].find(b => b.textContent.trim() === `${state.pct}%`);
+      if (target) target.classList.add('active');
+    }
+  });
+
+  // Restaurar fotos y layout
+  if (snap.photos && snap.photos.length) {
+    photos.length = 0;
+    snap.photos.forEach(p => photos.push(p));
+    window._pageLayout     = snap.pageLayout     || [];
+    window._photoPageNames = snap.photoPageNames || [];
+    window._photoPageObs   = snap.photoPageObs   || [];
+    updatePhotoGrid();
+  }
+
+  // Restaurar imagen de pieza
+  if (snap.piezaImgData) {
+    piezaImgData     = snap.piezaImgData;
+    piezaImgRotation  = snap.piezaImgRotation || 0;
+    piezaImgMime      = snap.piezaImgMime || 'image/jpeg';
+    renderPiezaImg();
+  }
+
+  // Volver al paso donde estaba (sin pasar validación, ya que son datos propios)
+  if (typeof snap.currentStep === 'number') {
+    goToStep(snap.currentStep);
+  }
+
+  showToast('Progreso anterior restaurado ✓');
+}
+
+function initAutoSave() {
+  // Guardar en cualquier cambio dentro del formulario principal
+  document.getElementById('sec-0').addEventListener('input', scheduleSave);
+  document.getElementById('sec-0').addEventListener('change', scheduleSave);
+  document.querySelectorAll('.agua-item').forEach(el => {
+    el.addEventListener('click', scheduleSave);
+  });
+  // Guardar también al cambiar de paso o tocar fotos (delay corto para que el DOM se actualice antes)
+  document.addEventListener('click', e => {
+    if (e.target.closest('.step-tab, .photo-card, .photo-action-btn, .agua-item, .pct-btn, [onclick*="goToStep"], [onclick*="Photo"], [onclick*="movePhotoLayout"]')) {
+      scheduleSave();
+    }
+  });
+  // Guardar al perder el foco de la página (cambiar de app) — más confiable que beforeunload en móvil
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveProgressNow();
+  });
+}
+
 </script>
 </body>
 </html>
