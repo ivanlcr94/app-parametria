@@ -682,13 +682,13 @@
 
     <!-- DOS botones: cámara directa y galería independientes -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px">
-      <label for="inputCamara" style="display:block;cursor:pointer;-webkit-tap-highlight-color:transparent">
+      <div onclick="openLiveCamera()" style="cursor:pointer;-webkit-tap-highlight-color:transparent">
         <div class="camera-area" style="margin-bottom:0;padding:22px 12px">
           <div class="camera-icon" style="font-size:36px">📷</div>
           <p style="margin-top:6px"><strong>Cámara</strong></p>
-          <p style="font-size:12px;margin-top:4px;color:var(--muted)">Tomar foto ahora</p>
+          <p style="font-size:12px;margin-top:4px;color:var(--muted)">Tomar fotos seguidas</p>
         </div>
-      </label>
+      </div>
       <label for="inputGaleria" style="display:block;cursor:pointer;-webkit-tap-highlight-color:transparent">
         <div class="camera-area" style="margin-bottom:0;padding:22px 12px">
           <div class="camera-icon" style="font-size:36px">🖼️</div>
@@ -697,9 +697,6 @@
         </div>
       </label>
     </div>
-    <!-- capture="environment" → cámara trasera directa, sin mostrar galería -->
-    <input type="file" id="inputCamara" accept="image/*" capture="environment"
-           style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;pointer-events:none">
     <!-- sin capture → picker de archivos / galería nativo -->
     <input type="file" id="inputGaleria" accept="image/*"
            style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;pointer-events:none">
@@ -768,6 +765,29 @@
   </div>
 
 </main>
+
+<!-- Modal cámara en vivo (fotos seguidas) -->
+<div class="modal-overlay" id="liveCameraModal" style="display:none;background:#000;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:0">
+  <div style="position:relative;flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000">
+    <video id="liveCameraVideo" autoplay playsinline style="width:100%;height:100%;object-fit:contain"></video>
+    <canvas id="liveCameraCanvas" style="display:none"></canvas>
+    <div id="liveCameraFlash" style="position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .15s"></div>
+
+    <!-- Preview de confirmación tras cada captura -->
+    <div id="liveCapturePreview" style="display:none;position:absolute;inset:0;background:#000;flex-direction:column;align-items:center;justify-content:center;z-index:5">
+      <img id="liveCapturePreviewImg" src="" style="max-width:100%;max-height:80%;object-fit:contain">
+      <div style="display:flex;gap:16px;margin-top:18px">
+        <button onclick="rejectLiveCapture()" class="btn btn-danger" style="padding:12px 22px">🗑 Repetir</button>
+        <button onclick="acceptLiveCapture()" class="btn btn-ok" style="padding:12px 22px">✓ Confirmar</button>
+      </div>
+    </div>
+  </div>
+  <div style="background:#000;padding:18px 20px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+    <button onclick="closeLiveCamera()" style="background:rgba(255,255,255,.12);border:none;color:#fff;width:48px;height:48px;border-radius:50%;font-size:20px;cursor:pointer;flex-shrink:0">✕</button>
+    <button onclick="captureLivePhoto()" style="background:#fff;border:4px solid rgba(255,255,255,.4);width:68px;height:68px;border-radius:50%;cursor:pointer;flex-shrink:0"></button>
+    <div id="liveCameraCount" style="color:#fff;font-size:13px;font-weight:600;min-width:48px;text-align:center;flex-shrink:0">0 fotos</div>
+  </div>
+</div>
 
 <!-- Modal preview foto -->
 <div class="modal-overlay" id="photoModal">
@@ -1008,6 +1028,88 @@ async function getPiezaImgFinal() {
   if (!piezaImgData) return null;
   if (piezaImgRotation === 0) return piezaImgData;
   return rotateImageData(piezaImgData, piezaImgRotation);
+}
+
+// ══════════════════════════════════════════════════
+//  CÁMARA EN VIVO — permite tomar fotos seguidas
+//  sin cerrar la vista entre cada captura
+// ══════════════════════════════════════════════════
+let liveCameraStream   = null;
+let _liveCapturePending = null;
+
+async function openLiveCamera() {
+  const modal = document.getElementById('liveCameraModal');
+  const video = document.getElementById('liveCameraVideo');
+  try {
+    liveCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width:  { ideal: 1600 },
+        height: { ideal: 1200 },
+        aspectRatio: { ideal: 4 / 3 }
+      },
+      audio: false
+    });
+    video.srcObject = liveCameraStream;
+    modal.style.display = 'flex';
+    document.getElementById('liveCameraCount').textContent = `${photos.length} fotos`;
+  } catch (err) {
+    showToast('No se pudo acceder a la cámara', true);
+  }
+}
+
+function closeLiveCamera() {
+  const modal = document.getElementById('liveCameraModal');
+  modal.style.display = 'none';
+  document.getElementById('liveCapturePreview').style.display = 'none';
+  _liveCapturePending = null;
+  if (liveCameraStream) {
+    liveCameraStream.getTracks().forEach(t => t.stop());
+    liveCameraStream = null;
+  }
+  updatePhotoGrid();
+}
+
+async function captureLivePhoto() {
+  const video  = document.getElementById('liveCameraVideo');
+  const canvas = document.getElementById('liveCameraCanvas');
+  if (!video.videoWidth) return;
+
+  // Copiar el frame exactamente como se ve en pantalla, sin rotar ni recortar
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+  // Flash visual de captura
+  const flash = document.getElementById('liveCameraFlash');
+  flash.style.opacity = '1';
+  setTimeout(() => { flash.style.opacity = '0'; }, 120);
+
+  const compressed = await resizeAndCompress(dataUrl, 1600, 0.78);
+  showLiveCapturePreview(compressed);
+}
+
+// Muestra la foto recién tomada para confirmar antes de agregarla
+function showLiveCapturePreview(dataUrl) {
+  _liveCapturePending = dataUrl;
+  document.getElementById('liveCapturePreviewImg').src = dataUrl;
+  document.getElementById('liveCapturePreview').style.display = 'flex';
+}
+
+function acceptLiveCapture() {
+  if (_liveCapturePending) {
+    photos.push({ dataUrl: _liveCapturePending, rotation: 0 });
+    document.getElementById('liveCameraCount').textContent = `${photos.length} fotos`;
+    _liveCapturePending = null;
+  }
+  document.getElementById('liveCapturePreview').style.display = 'none';
+}
+
+function rejectLiveCapture() {
+  _liveCapturePending = null;
+  document.getElementById('liveCapturePreview').style.display = 'none';
+  showToast('Foto descartada');
 }
 
 function handleFileInput(e) {
