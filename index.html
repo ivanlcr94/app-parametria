@@ -11,6 +11,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>Parametría</title>
+<script>
+  // Aplicar el tema guardado lo antes posible, antes de pintar el body
+  try {
+    var _t = localStorage.getItem('parametria_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', _t);
+  } catch (e) {}
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Barlow:wght@300;400;500;600&display=swap');
@@ -26,6 +33,20 @@
     --muted:    #7a8799;
     --ok:       #22c55e;
     --danger:   #ef4444;
+    --radius:   10px;
+  }
+
+  :root[data-theme="light"] {
+    --bg:       #f4f5f7;
+    --surface:  #ffffff;
+    --card:     #ffffff;
+    --border:   #dde1e6;
+    --accent:   #e76e17;
+    --accent2:  #f38d3a;
+    --text:     #1a202c;
+    --muted:    #6b7280;
+    --ok:       #16a34a;
+    --danger:   #dc2626;
     --radius:   10px;
   }
 
@@ -269,6 +290,13 @@
   .pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .agua-custom { margin-top: 8px; }
 
+  /* ── ROBOT (mismo patrón visual que agua) ── */
+  .robot-tciclo {
+    display: flex; align-items: center; gap: 6px; margin-left: auto;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .robot-item.selected .robot-tciclo { opacity: 1; pointer-events: auto; }
+
   /* ── ORDER GRID touch ── */
   .photo-card.touch-dragging { opacity: .35; transform: scale(.97); }
   .photo-card.touch-over { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
@@ -471,6 +499,21 @@
   <div>
     <h1>Parametría</h1>
   </div>
+  <button id="themeToggle" onclick="toggleTheme()" title="Cambiar tema" style="
+    margin-left:auto; flex-shrink:0;
+    width:52px; height:28px; border-radius:14px;
+    background:var(--bg); border:1px solid var(--border);
+    position:relative; cursor:pointer; padding:0;
+    display:flex; align-items:center;
+  ">
+    <span id="themeKnob" style="
+      position:absolute; top:2px; left:2px;
+      width:22px; height:22px; border-radius:50%;
+      background:var(--accent); color:#fff;
+      display:flex; align-items:center; justify-content:center;
+      font-size:12px; transition:left .2s;
+    ">🌙</span>
+  </button>
 </header>
 
 <div class="steps-bar">
@@ -662,6 +705,21 @@
           </div>
         </div>
         <input type="text" id="aguaCustom" placeholder="Otra (escribir aquí)…" class="agua-custom" style="margin-top:8px">
+      </div>
+
+      <!-- Robot -->
+      <div class="field">
+        <label>Robot</label>
+        <div class="agua-item robot-item" id="robotItem" onclick="toggleRobot(this)">
+          <div class="dot"></div><span class="agua-label">Tiene robot</span>
+          <div class="robot-tciclo">
+            <span style="font-size:11px;color:var(--muted);white-space:nowrap">T. Ciclo</span>
+            <input type="number" id="tCiclo" placeholder="seg" step="0.1" min="0"
+                   onclick="event.stopPropagation()"
+                   style="width:64px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:4px 6px;text-align:center">
+            <span style="font-size:11px;color:var(--muted)">seg</span>
+          </div>
+        </div>
       </div>
 
       <!-- Observación pieza -->
@@ -906,6 +964,13 @@ function changeVal(id, delta) {
 // ══════════════════════════════════════════════════
 //  AGUA
 // ══════════════════════════════════════════════════
+function toggleRobot(el) {
+  el.classList.toggle('selected');
+  if (!el.classList.contains('selected')) {
+    document.getElementById('tCiclo').value = '';
+  }
+}
+
 function toggleAgua(el) {
   // No propagar si el click viene de un pct-btn
   el.classList.toggle('selected');
@@ -961,6 +1026,35 @@ document.addEventListener('contextmenu', e => {
   if (tag !== 'INPUT' && tag !== 'TEXTAREA') e.preventDefault();
 });
 
+// ══════════════════════════════════════════════════
+//  TEMA CLARO / OSCURO — persistente por usuario
+// ══════════════════════════════════════════════════
+const THEME_KEY = 'parametria_theme';
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const knob = document.getElementById('themeKnob');
+  if (knob) {
+    knob.textContent = theme === 'light' ? '☀️' : '🌙';
+    knob.style.left = theme === 'light' ? '28px' : '2px';
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  const next = current === 'light' ? 'dark' : 'light';
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+}
+
+function initTheme() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) {}
+  applyTheme(saved);
+}
+
+// El tema ya se aplicó en el <head> antes de pintar el body (sin parpadeo)
+
 document.addEventListener('DOMContentLoaded', () => {
   // Fecha de hoy por defecto
   document.getElementById('fecha').value = new Date().toISOString().split('T')[0];
@@ -989,6 +1083,7 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreSavedProgress();
   // Activar autoguardado de cambios en el formulario
   initAutoSave();
+  initTheme();
 });
 
 // Imagen de la pieza
@@ -1769,6 +1864,8 @@ function getFormData() {
     pesoColada:        document.getElementById('pesoColada').value,
     cantColada:        document.getElementById('cantColada').value,
     agua:              getAguaValues(),
+    tieneRobot:        document.getElementById('robotItem').classList.contains('selected'),
+    tCiclo:            document.getElementById('tCiclo').value.trim(),
     observacion:       document.getElementById('observacion').value.trim(),
     observacionMolde:  document.getElementById('observacionMolde').value.trim(),
     piezaImg:          piezaImgData,  // se resuelve a final rotado en generatePDF
@@ -1957,6 +2054,9 @@ async function generatePDF() {
   y = dataRow('Peso de pieza',      `${data.pesoPieza} g × ${data.cantPieza} unid.`, y, false);
   y = dataRow('Peso de colada',     `${data.pesoColada} g × ${data.cantColada} unid.`, y, true);
   y = dataRow('Conexiones de agua', data.agua,                             y, false);
+  if (data.tieneRobot) {
+    y = dataRow('Robot', data.tCiclo ? `Sí — T. Ciclo: ${data.tCiclo} s` : 'Sí', y, true);
+  }
 
   // bloque peso total
   const totalPieza  = (parseFloat(data.pesoPieza)  * parseInt(data.cantPieza)).toFixed(1);
@@ -2174,6 +2274,8 @@ function closeConfirmModal() {
 }
 
 function confirmarNuevoRegistro() {
+  _suppressAutoSave = true;
+  clearTimeout(_saveTimer);
   clearSavedProgress();
   window.location.reload();
 }
@@ -2281,6 +2383,7 @@ function installPWA() {
 // ══════════════════════════════════════════════════
 const STORAGE_KEY = 'parametria_progress_v1';
 let _saveTimer = null;
+let _suppressAutoSave = false; // se activa al confirmar "nuevo registro" para evitar que el autoguardado reescriba el storage justo antes del reload
 
 function snapshotProgress() {
   // Campos del formulario (paso 1) — cualquier input/select/textarea con id dentro de #sec-0
@@ -2298,10 +2401,15 @@ function snapshotProgress() {
     pct: el.dataset.pct || null,
   }));
 
+  // Robot: estado seleccionado de la tarjeta
+  const robotEl = document.getElementById('robotItem');
+  const robotSelected = robotEl ? robotEl.classList.contains('selected') : false;
+
   return {
     currentStep,
     formData,
     aguaState,
+    robotSelected,
     photos,
     pageLayout:     window._pageLayout || [],
     photoPageNames: window._photoPageNames || [],
@@ -2314,6 +2422,7 @@ function snapshotProgress() {
 }
 
 function saveProgressNow() {
+  if (_suppressAutoSave) return;
   try {
     const snap = snapshotProgress();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
@@ -2324,6 +2433,7 @@ function saveProgressNow() {
 }
 
 function scheduleSave() {
+  if (_suppressAutoSave) return;
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(saveProgressNow, 500);
 }
@@ -2353,6 +2463,12 @@ function restoreSavedProgress() {
     if (el.type === 'checkbox') el.checked = !!val;
     else el.value = val;
   });
+  // Restaurar estado del robot
+  const robotEl = document.getElementById('robotItem');
+  if (robotEl) {
+    if (snap.robotSelected) robotEl.classList.add('selected');
+    else robotEl.classList.remove('selected');
+  }
 
   // Restaurar agua
   (snap.aguaState || []).forEach(state => {
