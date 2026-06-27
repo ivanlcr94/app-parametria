@@ -1970,18 +1970,32 @@ async function generatePDF() {
   }
 
   function dataRow(label, value, y, shade) {
-    const rowH = 8;
+    const valueX     = margin + 58;
+    const valueMaxW  = W - margin - valueX; // ancho disponible para el valor
+    const valueText  = String(value || '—');
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(valueText, valueMaxW);
+    const lineH = 4.6;
+    const rowH  = Math.max(8, lines.length * lineH + 3.5);
+
     if (shade) {
       doc.setFillColor(...cLight);
       doc.rect(margin, y, W - margin * 2, rowH, 'F');
     }
+
     doc.setFontSize(7);
     doc.setTextColor(...cMid);
     doc.setFont('helvetica', 'normal');
     doc.text(label.toUpperCase(), margin + 3, y + 5.2);
+
     doc.setFontSize(9);
     doc.setTextColor(...cDark);
-    doc.text(String(value || '—'), margin + 58, y + 5.2);
+    lines.forEach((line, i) => {
+      doc.text(line, valueX, y + 5.2 + i * lineH);
+    });
+
     return y + rowH + 1;
   }
 
