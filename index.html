@@ -1181,6 +1181,7 @@ function handlePiezaImg(e) {
       piezaImgData = await resizeAndCompress(corrected, 1200, 0.78);
     }
     piezaImgRotation = 0;
+    hideUndoBgButton();
     renderPiezaImg();
   };
   reader.readAsDataURL(file);
@@ -1219,14 +1220,35 @@ async function loadBgRemovalModule() {
 
 async function removePiezaBackground() {
   if (!piezaImgData) return;
-  const btn        = document.getElementById('removeBgBtn');
-  const status      = document.getElementById('removeBgStatus');
-  const scanOverlay = document.getElementById('bgScanOverlay');
-  const scanText    = document.getElementById('bgScanText');
+  const btn         = document.getElementById('removeBgBtn');
+  const status       = document.getElementById('removeBgStatus');
+  const scanOverlay  = document.getElementById('bgScanOverlay');
+  const scanText     = document.getElementById('bgScanText');
 
   btn.disabled = true;
   scanOverlay.style.display = 'flex';
   scanText.textContent = 'Cargando librería…';
+
+  // Guardar el estado anterior para poder deshacer
+  const previousImgData     = piezaImgData;
+  const previousImgRotation = piezaImgRotation;
+  const previousImgMime     = piezaImgMime;
+
+  // Durante la etapa de cómputo (inferencia del modelo) la librería no
+  // reporta progreso granular — simulamos un avance suave para que la
+  // animación no se vea estancada en 0% y salte de golpe a 100%.
+  let simInterval = null;
+  function startSimulatedProgress(label) {
+    let fake = 0;
+    scanText.textContent = `${label} 0%`;
+    simInterval = setInterval(() => {
+      fake = Math.min(fake + Math.random() * 4 + 1, 96); // nunca llega a 100 solo, lo cierra el real
+      scanText.textContent = `${label} ${Math.round(fake)}%`;
+    }, 220);
+  }
+  function stopSimulatedProgress() {
+    if (simInterval) { clearInterval(simInterval); simInterval = null; }
+  }
 
   try {
     const { removeBackground } = await loadBgRemovalModule();
@@ -1241,17 +1263,26 @@ async function removePiezaBackground() {
     const blob = await removeBackground(sourceImg, {
       // publicPath por defecto de la librería (staticimgly.com) — se cachea
       // automáticamente en el navegador/Service Worker tras la primera descarga.
-      model: 'large', // isnet — máxima calidad disponible
+      model: 'large',          // isnet — máxima calidad disponible
       device: 'cpu',
+      proxyToWorker: true,      // corre la inferencia en un Web Worker: no congela la UI ni la animación
       progress: (key, current, total) => {
-        const pct = total ? Math.round((current / total) * 100) : null;
-        scanText.textContent = pct !== null
-          ? `${humanizeBgKey(key)} ${pct}%`
-          : humanizeBgKey(key);
+        const stage = humanizeBgKey(key);
+        if (total && total > 1) {
+          // Hay progreso real (típico de la descarga del modelo) → usarlo tal cual
+          stopSimulatedProgress();
+          const pct = Math.round((current / total) * 100);
+          scanText.textContent = `${stage} ${pct}%`;
+        } else {
+          // Sin progreso granular (etapa de cómputo) → simular avance continuo
+          stopSimulatedProgress();
+          startSimulatedProgress(stage);
+        }
       },
     });
 
-    scanText.textContent = 'Optimizando resultado…';
+    stopSimulatedProgress();
+    scanText.textContent = 'Optimizando resultado… 100%';
     const resultDataUrl = await blobToDataUrl(blob);
 
     piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
@@ -1259,19 +1290,62 @@ async function removePiezaBackground() {
     piezaImgRotation = 0;
     renderPiezaImg();
 
+    // Habilitar deshacer con el estado previo guardado
+    _piezaBgUndoSnapshot = {
+      dataUrl:  previousImgData,
+      rotation: previousImgRotation,
+      mime:     previousImgMime,
+    };
+    showUndoBgButton();
+
     scanOverlay.style.display = 'none';
     status.style.display = 'block';
     status.textContent = '✅ Fondo eliminado';
-    setTimeout(() => { status.style.display = 'none'; }, 3000);
+    setTimeout(() => { status.style.display = 'none'; }, 4000);
 
   } catch (err) {
     console.error('Error al quitar fondo:', err);
+    stopSimulatedProgress();
     scanOverlay.style.display = 'none';
     status.style.display = 'block';
     status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet (se necesita la primera vez).');
   } finally {
     btn.disabled = false;
   }
+}
+
+// ── Deshacer "Quitar fondo" ──
+let _piezaBgUndoSnapshot = null;
+
+function showUndoBgButton() {
+  let undoBtn = document.getElementById('undoBgBtn');
+  if (!undoBtn) {
+    undoBtn = document.createElement('button');
+    undoBtn.id = 'undoBgBtn';
+    undoBtn.type = 'button';
+    undoBtn.className = 'pieza-img-btn';
+    undoBtn.style.cssText = 'grid-column:1/-1;margin-top:8px;';
+    undoBtn.onclick = undoRemoveBg;
+    document.querySelector('.pieza-img-btns').insertAdjacentElement('afterend', undoBtn);
+  }
+  undoBtn.innerHTML = '↩️ Deshacer (volver a la foto original)';
+  undoBtn.style.display = 'flex';
+}
+
+function hideUndoBgButton() {
+  const undoBtn = document.getElementById('undoBgBtn');
+  if (undoBtn) undoBtn.style.display = 'none';
+  _piezaBgUndoSnapshot = null;
+}
+
+function undoRemoveBg() {
+  if (!_piezaBgUndoSnapshot) return;
+  piezaImgData     = _piezaBgUndoSnapshot.dataUrl;
+  piezaImgRotation = _piezaBgUndoSnapshot.rotation;
+  piezaImgMime     = _piezaBgUndoSnapshot.mime;
+  renderPiezaImg();
+  hideUndoBgButton();
+  showToast('Imagen original restaurada');
 }
 
 // Traduce las claves técnicas de progreso de la librería a texto legible
@@ -1297,6 +1371,7 @@ function deletePiezaImg() {
   piezaImgRotation = 0;
   document.getElementById('removeBgBtn').style.display = 'none';
   document.getElementById('removeBgStatus').style.display = 'none';
+  hideUndoBgButton();
   const wrap = document.getElementById('piezaImgWrap');
   const img  = document.getElementById('piezaImg');
   const ph   = document.getElementById('piezaPlaceholder');
