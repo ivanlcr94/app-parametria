@@ -242,7 +242,7 @@
   .pieza-img-placeholder { text-align: center; padding: 20px; pointer-events: none; }
   .pieza-img-placeholder span { font-size: 36px; display: block; margin-bottom: 8px; }
   .pieza-img-placeholder p { font-size: 12px; color: var(--muted); }
-  .pieza-img-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .pieza-img-btns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
   .pieza-img-btn {
     display: flex; align-items: center; justify-content: center; gap: 6px;
     padding: 9px 10px; border-radius: var(--radius);
@@ -257,6 +257,51 @@
     display: none; gap: 5px;
   }
   .pieza-img-wrap.has-img .pieza-img-overlay { display: flex; }
+
+  /* ── Overlay de "quitar fondo": escaneo + spinner ── */
+  .bg-scan-overlay {
+    position: absolute; inset: 0; border-radius: var(--radius);
+    background: rgba(13,17,23,.55);
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 5;
+  }
+  .bg-scan-line {
+    position: absolute; top: 0; left: -20%;
+    width: 20%; height: 100%;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(231,110,23,0) 0%,
+      rgba(231,110,23,.55) 50%,
+      rgba(255,170,110,.9) 50%,
+      rgba(231,110,23,.55) 50%,
+      rgba(231,110,23,0) 100%
+    );
+    filter: blur(1px);
+    animation: bgScanSweep 1.6s ease-in-out infinite;
+  }
+  @keyframes bgScanSweep {
+    0%   { left: -20%; }
+    50%  { left: 100%; }
+    100% { left: -20%; }
+  }
+  .bg-scan-center {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .bg-scan-spinner {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.25);
+    border-top-color: var(--accent);
+    animation: bgScanSpin .8s linear infinite;
+  }
+  @keyframes bgScanSpin { to { transform: rotate(360deg); } }
+  .bg-scan-text {
+    color: #fff; font-size: 12px; font-weight: 600;
+    text-align: center; max-width: 80%;
+    text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
   .pieza-img-del, .pieza-img-rot {
     border: none; border-radius: 6px;
     width: 32px; height: 32px; font-size: 15px; cursor: pointer;
@@ -572,6 +617,15 @@
           <div class="pieza-img-overlay">
             <button class="pieza-img-rot" onclick="rotatePiezaImg()" title="Rotar">🔄</button>
             <button class="pieza-img-del" onclick="deletePiezaImg()" title="Eliminar">✕</button>
+          </div>
+
+          <!-- Overlay de procesamiento: línea de escaneo + spinner + estado -->
+          <div id="bgScanOverlay" class="bg-scan-overlay" style="display:none">
+            <div class="bg-scan-line"></div>
+            <div class="bg-scan-center">
+              <div class="bg-scan-spinner"></div>
+              <p id="bgScanText" class="bg-scan-text">Quitando fondo…</p>
+            </div>
           </div>
         </div>
         <div class="pieza-img-btns">
@@ -1165,11 +1219,14 @@ async function loadBgRemovalModule() {
 
 async function removePiezaBackground() {
   if (!piezaImgData) return;
-  const btn    = document.getElementById('removeBgBtn');
-  const status = document.getElementById('removeBgStatus');
+  const btn        = document.getElementById('removeBgBtn');
+  const status      = document.getElementById('removeBgStatus');
+  const scanOverlay = document.getElementById('bgScanOverlay');
+  const scanText    = document.getElementById('bgScanText');
+
   btn.disabled = true;
-  status.style.display = 'block';
-  status.textContent = '⏳ Cargando librería...';
+  scanOverlay.style.display = 'flex';
+  scanText.textContent = 'Cargando librería…';
 
   try {
     const { removeBackground } = await loadBgRemovalModule();
@@ -1179,7 +1236,7 @@ async function removePiezaBackground() {
       ? await rotateImageData(piezaImgData, piezaImgRotation)
       : piezaImgData;
 
-    status.textContent = '⏳ Descargando modelo (la primera vez puede tardar)...';
+    scanText.textContent = 'Descargando modelo…';
 
     const blob = await removeBackground(sourceImg, {
       // publicPath por defecto de la librería (staticimgly.com) — se cachea
@@ -1187,11 +1244,14 @@ async function removePiezaBackground() {
       model: 'large', // isnet — máxima calidad disponible
       device: 'cpu',
       progress: (key, current, total) => {
-        status.textContent = `⏳ ${key}: ${current}/${total}`;
+        const pct = total ? Math.round((current / total) * 100) : null;
+        scanText.textContent = pct !== null
+          ? `${humanizeBgKey(key)} ${pct}%`
+          : humanizeBgKey(key);
       },
     });
 
-    status.textContent = '🖼️ Optimizando resultado...';
+    scanText.textContent = 'Optimizando resultado…';
     const resultDataUrl = await blobToDataUrl(blob);
 
     piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
@@ -1199,15 +1259,28 @@ async function removePiezaBackground() {
     piezaImgRotation = 0;
     renderPiezaImg();
 
+    scanOverlay.style.display = 'none';
+    status.style.display = 'block';
     status.textContent = '✅ Fondo eliminado';
     setTimeout(() => { status.style.display = 'none'; }, 3000);
 
   } catch (err) {
     console.error('Error al quitar fondo:', err);
+    scanOverlay.style.display = 'none';
+    status.style.display = 'block';
     status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet (se necesita la primera vez).');
   } finally {
     btn.disabled = false;
   }
+}
+
+// Traduce las claves técnicas de progreso de la librería a texto legible
+function humanizeBgKey(key) {
+  if (!key) return 'Procesando…';
+  if (/fetch/i.test(key))    return 'Descargando modelo';
+  if (/compute|inference/i.test(key)) return 'Analizando imagen';
+  if (/decode/i.test(key))  return 'Procesando imagen';
+  return 'Procesando…';
 }
 
 function blobToDataUrl(blob) {
