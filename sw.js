@@ -5,7 +5,7 @@
 //  datos), incluso en redes locales sin internet.
 // ══════════════════════════════════════════════════
 
-const CACHE_NAME = 'parametria-v3'; // subir versión al actualizar archivos
+const CACHE_NAME = 'parametria-v6'; // subir versión al actualizar archivos
 
 // Todos los recursos que la app necesita para funcionar sin red.
 // IMPORTANTE: no incluir URLs externas (CDN/Google Fonts) — todo
@@ -42,32 +42,32 @@ self.addEventListener('activate', event => {
 });
 
 // ── FETCH: cache-first, con actualización en segundo plano cuando hay red ──
+// Maneja tanto recursos propios como externos (CDN del modelo ONNX),
+// incluyendo respuestas "opacas" (cross-origin sin CORS) que igual se cachean.
 self.addEventListener('fetch', event => {
-  // Solo manejar peticiones GET del mismo origen
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
     caches.match(event.request).then(cachedResponse => {
-      // Si está en cache, responder inmediato (rápido y funciona offline)
       if (cachedResponse) {
-        // Intentar refrescar el cache en segundo plano si hay red disponible
+        // Refrescar en segundo plano si hay red, sin bloquear la respuesta
         fetch(event.request).then(networkResponse => {
-          if (networkResponse && networkResponse.status === 200) {
+          if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
             caches.open(CACHE_NAME).then(cache => cache.put(event.request, networkResponse));
           }
-        }).catch(() => { /* sin red: no pasa nada, ya respondimos desde cache */ });
+        }).catch(() => { /* sin red: ya respondimos desde cache */ });
         return cachedResponse;
       }
 
-      // No está en cache → intentar red, y guardar copia para la próxima vez
+      // No está en cache → ir a la red (puede ser un CDN externo, p.ej. el
+      // modelo ONNX) y guardar copia para que la próxima vez sea offline
       return fetch(event.request).then(networkResponse => {
-        if (networkResponse && networkResponse.status === 200) {
+        if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
           const clone = networkResponse.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return networkResponse;
       }).catch(() => {
-        // Sin red y sin cache para este recurso — si es navegación, devolver index.html
         if (event.request.mode === 'navigate') {
           return caches.match('./index.html');
         }

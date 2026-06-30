@@ -19,6 +19,15 @@
   } catch (e) {}
 </script>
 <script src="jspdf.umd.min.js"></script>
+<!-- Import map: resuelve "onnxruntime-web" desde CDN. El navegador (y el -->
+<!-- Service Worker) cachean estos archivos tras la primera descarga. -->
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.mjs"
+  }
+}
+</script>
 <style>
   /* Fuentes del sistema — sin dependencia de red para que funcione 100% offline */
   :root {
@@ -576,7 +585,11 @@
             <input type="file" id="piezaImgGal" accept="image/*"
                    style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;pointer-events:none">
           </label>
+          <button type="button" id="removeBgBtn" class="pieza-img-btn" onclick="removePiezaBackground()" style="display:none">
+            ✂️ Quitar fondo
+          </button>
         </div>
+        <div id="removeBgStatus" style="font-size:11px;color:var(--muted);margin-top:4px;display:none"></div>
       </div>
 
       <!-- Molde + Producto en una sola línea -->
@@ -591,7 +604,7 @@
 
       <div class="field">
         <label>Materia Prima <span style="color:var(--text)">*</span></label>
-        <input type="text" id="materiaPrima" placeholder="Ej: H 100% | Ocre 4%">
+        <input type="text" id="materiaPrima" placeholder="Ej: H + Ocre 4%">
       </div>
 
       <!-- Peso pieza -->
@@ -746,11 +759,11 @@
   <div class="section" id="sec-1">
     <div class="section-title">
       <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-      Fotos del proceso
+      Fotos de pantallas
     </div>
 
     <div class="callout">
-      Tomá fotos de las <strong>pantallas de la máquina, molde, defectos de las piezas, etc...</strong>. Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
+      Tomá fotos de las pantallas de la máquina. Tras cada foto podés confirmarla o eliminarla. Después podrás ordenarlas.
     </div>
 
     <!-- DOS botones: cámara directa y galería independientes -->
@@ -845,6 +858,14 @@
     <video id="liveCameraVideo" autoplay playsinline style="width:100%;height:100%;object-fit:contain"></video>
     <canvas id="liveCameraCanvas" style="display:none"></canvas>
     <div id="liveCameraFlash" style="position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .15s"></div>
+
+    <!-- Botón cambiar cámara (gran angular / principal / etc.) -->
+    <button onclick="toggleCameraSelector()" id="cameraSwitchBtn" style="display:none;position:absolute;top:14px;right:14px;background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 14px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;z-index:6;display:flex;align-items:center;gap:6px">
+      🔁 <span id="currentCameraLabel">Cámara</span>
+    </button>
+
+    <!-- Selector de cámara (lista desplegable) -->
+    <div id="cameraSelectorList" style="display:none;position:absolute;top:60px;right:14px;background:rgba(20,20,20,.95);border-radius:12px;padding:8px;z-index:7;min-width:200px;max-width:280px"></div>
 
     <!-- Preview de confirmación tras cada captura -->
     <div id="liveCapturePreview" style="display:none;position:absolute;inset:0;background:#000;flex-direction:column;align-items:center;justify-content:center;z-index:5">
@@ -1123,6 +1144,7 @@ function renderPiezaImg() {
   img.style.maxHeight  = (deg === 90 || deg === 270) ? '160px' : '220px';
   ph.style.display     = 'none';
   wrap.classList.add('has-img');
+  document.getElementById('removeBgBtn').style.display = 'inline-flex';
 }
 
 function rotatePiezaImg() {
@@ -1131,9 +1153,77 @@ function rotatePiezaImg() {
   renderPiezaImg();
 }
 
+// ── Quitar fondo de la imagen de pieza (servidor Node.js local) ──
+// ── Quitar fondo de la imagen de pieza (ONNX desde CDN, se cachea solo) ──
+let _bgRemovalModule = null; // cache del módulo ya importado en esta sesión
+
+async function loadBgRemovalModule() {
+  if (_bgRemovalModule) return _bgRemovalModule;
+  _bgRemovalModule = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs');
+  return _bgRemovalModule;
+}
+
+async function removePiezaBackground() {
+  if (!piezaImgData) return;
+  const btn    = document.getElementById('removeBgBtn');
+  const status = document.getElementById('removeBgStatus');
+  btn.disabled = true;
+  status.style.display = 'block';
+  status.textContent = '⏳ Cargando librería...';
+
+  try {
+    const { removeBackground } = await loadBgRemovalModule();
+
+    // Aplicar rotación manual antes de procesar, para que el resultado quede ya derecho
+    const sourceImg = piezaImgRotation !== 0
+      ? await rotateImageData(piezaImgData, piezaImgRotation)
+      : piezaImgData;
+
+    status.textContent = '⏳ Descargando modelo (la primera vez puede tardar)...';
+
+    const blob = await removeBackground(sourceImg, {
+      // publicPath por defecto de la librería (staticimgly.com) — se cachea
+      // automáticamente en el navegador/Service Worker tras la primera descarga.
+      model: 'large', // isnet — máxima calidad disponible
+      device: 'cpu',
+      progress: (key, current, total) => {
+        status.textContent = `⏳ ${key}: ${current}/${total}`;
+      },
+    });
+
+    status.textContent = '🖼️ Optimizando resultado...';
+    const resultDataUrl = await blobToDataUrl(blob);
+
+    piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
+    piezaImgMime     = 'image/png';
+    piezaImgRotation = 0;
+    renderPiezaImg();
+
+    status.textContent = '✅ Fondo eliminado';
+    setTimeout(() => { status.style.display = 'none'; }, 3000);
+
+  } catch (err) {
+    console.error('Error al quitar fondo:', err);
+    status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet (se necesita la primera vez).');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function deletePiezaImg() {
   piezaImgData     = null;
   piezaImgRotation = 0;
+  document.getElementById('removeBgBtn').style.display = 'none';
+  document.getElementById('removeBgStatus').style.display = 'none';
   const wrap = document.getElementById('piezaImgWrap');
   const img  = document.getElementById('piezaImg');
   const ph   = document.getElementById('piezaPlaceholder');
@@ -1155,25 +1245,124 @@ async function getPiezaImgFinal() {
 // ══════════════════════════════════════════════════
 let liveCameraStream   = null;
 let _liveCapturePending = null;
+let _availableCameras   = []; // [{deviceId, label}] — solo cámaras traseras detectadas
+let _currentCameraId    = null;
+
+const CAMERA_PREF_KEY = 'parametria_camera_pref';
 
 async function openLiveCamera() {
   const modal = document.getElementById('liveCameraModal');
-  const video = document.getElementById('liveCameraVideo');
   try {
-    liveCameraStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width:  { ideal: 1600 },
-        height: { ideal: 1200 },
-        aspectRatio: { ideal: 4 / 3 }
-      },
-      audio: false
-    });
-    video.srcObject = liveCameraStream;
+    // Pedir un stream genérico primero: en muchos navegadores los labels de
+    // los dispositivos solo se revelan después de tener permiso concedido.
+    const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+
+    await detectBackCameras();
+
+    // Elegir cámara: preferencia guardada si sigue existiendo, si no la primera detectada
+    let savedId = null;
+    try { savedId = localStorage.getItem(CAMERA_PREF_KEY); } catch (e) {}
+    const stillExists = savedId && _availableCameras.some(c => c.deviceId === savedId);
+    _currentCameraId = stillExists ? savedId : (_availableCameras[0]?.deviceId || null);
+
+    // Detener el stream temporal y abrir con la cámara elegida
+    tempStream.getTracks().forEach(t => t.stop());
+    await startCameraStream(_currentCameraId);
+
     modal.style.display = 'flex';
     document.getElementById('liveCameraCount').textContent = `${photos.length} fotos`;
+
+    // Mostrar el botón de cambiar cámara solo si hay más de una opción
+    const switchBtn = document.getElementById('cameraSwitchBtn');
+    switchBtn.style.display = _availableCameras.length > 1 ? 'flex' : 'none';
+    updateCameraLabel();
   } catch (err) {
+    console.error(err);
     showToast('No se pudo acceder a la cámara', true);
+  }
+}
+
+async function detectBackCameras() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoInputs = devices.filter(d => d.kind === 'videoinput');
+
+  // Heurística para filtrar cámaras traseras y excluir la frontal:
+  // los labels suelen incluir "back", "trasera", "rear", o el navegador
+  // simplemente no incluye "front"/"frontal"/"user" en las traseras.
+  const isFront = label => /front|frontal|user|selfie/i.test(label);
+
+  _availableCameras = videoInputs
+    .filter(d => !isFront(d.label))
+    .map(d => ({ deviceId: d.deviceId, label: cleanCameraLabel(d.label) }));
+
+  // Si el filtro no encontró nada útil (labels vacíos o ambiguos), mostrar todas
+  if (_availableCameras.length === 0) {
+    _availableCameras = videoInputs.map(d => ({ deviceId: d.deviceId, label: cleanCameraLabel(d.label) }));
+  }
+}
+
+function cleanCameraLabel(label) {
+  if (!label) return 'Cámara';
+  // Acortar nombres largos típicos de Android: "Camera2 0, Facing back, ..." etc.
+  let clean = label.replace(/camera2?\s*/i, '').trim();
+  if (/ultra|wide|0\.5|gran\s*angular/i.test(label)) return '🔭 Gran angular';
+  if (/tele|zoom/i.test(label)) return '🔍 Teleobjetivo';
+  if (/wide|principal|main/i.test(label) && !/ultra/i.test(label)) return '📷 Principal';
+  return clean.length > 24 ? clean.slice(0, 24) + '…' : (clean || 'Cámara');
+}
+
+async function startCameraStream(deviceId) {
+  if (liveCameraStream) {
+    liveCameraStream.getTracks().forEach(t => t.stop());
+  }
+  const video = document.getElementById('liveCameraVideo');
+  const constraints = {
+    video: {
+      ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
+      width:  { ideal: 1600 },
+      height: { ideal: 1200 },
+      aspectRatio: { ideal: 4 / 3 }
+    },
+    audio: false
+  };
+  liveCameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject = liveCameraStream;
+}
+
+function updateCameraLabel() {
+  const cam = _availableCameras.find(c => c.deviceId === _currentCameraId);
+  document.getElementById('currentCameraLabel').textContent = cam ? cam.label : 'Cámara';
+}
+
+function toggleCameraSelector() {
+  const list = document.getElementById('cameraSelectorList');
+  const isOpen = list.style.display === 'block';
+  if (isOpen) { list.style.display = 'none'; return; }
+
+  list.innerHTML = _availableCameras.map(cam => `
+    <div onclick="switchToCamera('${cam.deviceId}')" style="
+      padding:10px 12px; border-radius:8px; cursor:pointer; color:#fff; font-size:13px;
+      background:${cam.deviceId === _currentCameraId ? 'rgba(231,110,23,.3)' : 'transparent'};
+      display:flex; align-items:center; justify-content:space-between; gap:8px;
+    ">
+      <span>${cam.label}</span>
+      ${cam.deviceId === _currentCameraId ? '<span style="color:#e76e17">✓</span>' : ''}
+    </div>
+  `).join('');
+  list.style.display = 'block';
+}
+
+async function switchToCamera(deviceId) {
+  document.getElementById('cameraSelectorList').style.display = 'none';
+  if (deviceId === _currentCameraId) return;
+  try {
+    await startCameraStream(deviceId);
+    _currentCameraId = deviceId;
+    try { localStorage.setItem(CAMERA_PREF_KEY, deviceId); } catch (e) {}
+    updateCameraLabel();
+  } catch (err) {
+    console.error(err);
+    showToast('No se pudo cambiar de cámara', true);
   }
 }
 
@@ -1181,6 +1370,7 @@ function closeLiveCamera() {
   const modal = document.getElementById('liveCameraModal');
   modal.style.display = 'none';
   document.getElementById('liveCapturePreview').style.display = 'none';
+  document.getElementById('cameraSelectorList').style.display = 'none';
   _liveCapturePending = null;
   if (liveCameraStream) {
     liveCameraStream.getTracks().forEach(t => t.stop());
