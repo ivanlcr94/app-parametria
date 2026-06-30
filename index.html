@@ -233,12 +233,12 @@
   .pieza-img-wrap {
     position: relative; width: 100%; border-radius: var(--radius);
     border: 2px dashed var(--border); overflow: hidden;
-    background: var(--card); min-height: 140px;
+    background: var(--card); min-height: 182px;
     display: flex; align-items: center; justify-content: center;
     transition: border-color .2s;
   }
   .pieza-img-wrap.has-img { border-style: solid; border-color: var(--accent); }
-  .pieza-img-wrap img { width: 100%; max-height: 220px; object-fit: contain; display: block; border-radius: var(--radius); }
+  .pieza-img-wrap img { width: 100%; max-height: 286px; object-fit: contain; display: block; border-radius: var(--radius); transform-origin: center center; transition: transform .25s; }
   .pieza-img-placeholder { text-align: center; padding: 20px; pointer-events: none; }
   .pieza-img-placeholder span { font-size: 36px; display: block; margin-bottom: 8px; }
   .pieza-img-placeholder p { font-size: 12px; color: var(--muted); }
@@ -252,6 +252,10 @@
     -webkit-tap-highlight-color: transparent;
   }
   .pieza-img-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .pieza-img-btn:disabled {
+    opacity: .4; cursor: not-allowed; color: var(--muted);
+  }
+  .pieza-img-btn:disabled:hover { border-color: var(--border); color: var(--muted); }
   .pieza-img-overlay {
     position: absolute; top: 6px; right: 6px;
     display: none; gap: 5px;
@@ -639,7 +643,7 @@
             <input type="file" id="piezaImgGal" accept="image/*"
                    style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;pointer-events:none">
           </label>
-          <button type="button" id="removeBgBtn" class="pieza-img-btn" onclick="removePiezaBackground()" style="display:none">
+          <button type="button" id="removeBgBtn" class="pieza-img-btn" onclick="removePiezaBackground()" disabled>
             ✂️ Quitar fondo
           </button>
         </div>
@@ -1193,13 +1197,34 @@ function renderPiezaImg() {
   const ph   = document.getElementById('piezaPlaceholder');
   img.src              = piezaImgData;
   img.style.display    = 'block';
-  img.style.transform  = `rotate(${piezaImgRotation}deg)`;
-  // Para 90/270 ajustar escala para que no se corte
-  const deg = ((piezaImgRotation % 360) + 360) % 360;
-  img.style.maxHeight  = (deg === 90 || deg === 270) ? '160px' : '220px';
-  ph.style.display     = 'none';
+  ph.style.display      = 'none';
   wrap.classList.add('has-img');
-  document.getElementById('removeBgBtn').style.display = 'inline-flex';
+  document.getElementById('removeBgBtn').disabled = false;
+
+  const deg = ((piezaImgRotation % 360) + 360) % 360;
+
+  if (deg === 90 || deg === 270) {
+    // Al rotar 90°, el contenido visual gira pero la CAJA de la imagen
+    // (width/height en el flujo del documento) no debe cambiar de tamaño
+    // real — solo lo que se ve adentro. Usamos position:absolute dentro
+    // de un contenedor con altura fija para que object-fit:contain haga
+    // todo el trabajo de encaje, sin que el tamaño real en píxeles de la
+    // imagen pueda inflar el layout de la página.
+    img.style.position   = 'absolute';
+    img.style.inset      = '0';
+    img.style.width      = '100%';
+    img.style.height     = '100%';
+    img.style.maxHeight  = 'none';
+    img.style.transform  = `rotate(${piezaImgRotation}deg)`;
+    wrap.style.height    = '286px'; // alto fijo para que la caja no colapse con position:absolute adentro
+  } else {
+    img.style.position   = 'static';
+    img.style.width      = '100%';
+    img.style.height     = 'auto';
+    img.style.maxHeight  = '286px';
+    img.style.transform  = `rotate(${piezaImgRotation}deg)`;
+    wrap.style.height    = 'auto';
+  }
 }
 
 function rotatePiezaImg() {
@@ -1318,23 +1343,16 @@ async function removePiezaBackground() {
 let _piezaBgUndoSnapshot = null;
 
 function showUndoBgButton() {
-  let undoBtn = document.getElementById('undoBgBtn');
-  if (!undoBtn) {
-    undoBtn = document.createElement('button');
-    undoBtn.id = 'undoBgBtn';
-    undoBtn.type = 'button';
-    undoBtn.className = 'pieza-img-btn';
-    undoBtn.style.cssText = 'grid-column:1/-1;margin-top:8px;';
-    undoBtn.onclick = undoRemoveBg;
-    document.querySelector('.pieza-img-btns').insertAdjacentElement('afterend', undoBtn);
-  }
-  undoBtn.innerHTML = '↩️ Deshacer (volver a la foto original)';
-  undoBtn.style.display = 'flex';
+  const btn = document.getElementById('removeBgBtn');
+  btn.innerHTML  = '↩️ Deshacer';
+  btn.onclick    = undoRemoveBg;
+  btn.disabled   = false;
 }
 
 function hideUndoBgButton() {
-  const undoBtn = document.getElementById('undoBgBtn');
-  if (undoBtn) undoBtn.style.display = 'none';
+  const btn = document.getElementById('removeBgBtn');
+  btn.innerHTML = '✂️ Quitar fondo';
+  btn.onclick   = removePiezaBackground;
   _piezaBgUndoSnapshot = null;
 }
 
@@ -1369,7 +1387,7 @@ function blobToDataUrl(blob) {
 function deletePiezaImg() {
   piezaImgData     = null;
   piezaImgRotation = 0;
-  document.getElementById('removeBgBtn').style.display = 'none';
+  document.getElementById('removeBgBtn').disabled = true;
   document.getElementById('removeBgStatus').style.display = 'none';
   hideUndoBgButton();
   const wrap = document.getElementById('piezaImgWrap');
@@ -1613,6 +1631,27 @@ function resizeAndCompress(dataUrl, maxPx, quality) {
 }
 
 // Versión para PNG: preserva canal alfa (sin fondo)
+// Compone un PNG con transparencia sobre un fondo de color sólido (RGB),
+// devolviendo un JPEG plano. Usado antes de insertar en el PDF, ya que
+// jsPDF no siempre respeta el canal alfa correctamente al renderizar.
+function flattenPngOnGray(dataUrl, rgbColor) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = `rgb(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]})`;
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0);
+      resolve(c.toDataURL('image/jpeg', 0.92));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 function resizeAndCompressPng(dataUrl, maxPx) {
   return new Promise(resolve => {
     const img = new Image();
@@ -2371,7 +2410,14 @@ async function generatePDF() {
     doc.setDrawColor(...cBorder);
     doc.setLineWidth(0.3);
     doc.roundedRect(W - margin - imgSize, 27, imgSize, imgSize, 3, 3, 'S');
-    try { doc.addImage(piezaImgFinal, piezaImgMime === 'image/png' ? 'PNG' : 'JPEG', px, py, pw, ph, '', 'FAST'); } catch(e) {}
+    // Para PNG con transparencia: componer sobre fondo gris ANTES de insertar.
+    // jsPDF no siempre respeta el canal alfa correctamente al renderizar el PDF,
+    // así que se "quema" el fondo gris (igual al marco) y se inserta como JPEG.
+    const imgToInsert = piezaImgMime === 'image/png'
+      ? await flattenPngOnGray(piezaImgFinal, cLight)
+      : piezaImgFinal;
+    const imgFormat = piezaImgMime === 'image/png' ? 'JPEG' : 'JPEG';
+    try { doc.addImage(imgToInsert, imgFormat, px, py, pw, ph, '', 'FAST'); } catch(e) {}
     doc.setFontSize(6);
     doc.setTextColor(...cMid);
     doc.text('PIEZA', W - margin - imgSize/2, 27 + imgSize + 4, { align: 'center' });
