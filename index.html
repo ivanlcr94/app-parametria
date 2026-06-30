@@ -275,19 +275,18 @@
     width: 20%; height: 100%;
     background: linear-gradient(90deg,
       transparent 0%,
-      rgba(231,110,23,0) 0%,
       rgba(231,110,23,.55) 50%,
       rgba(255,170,110,.9) 50%,
       rgba(231,110,23,.55) 50%,
-      rgba(231,110,23,0) 100%
+      transparent 100%
     );
-    filter: blur(1px);
+    will-change: transform;
     animation: bgScanSweep 1.6s ease-in-out infinite;
   }
   @keyframes bgScanSweep {
-    0%   { left: -20%; }
-    50%  { left: 100%; }
-    100% { left: -20%; }
+    0%   { transform: translateX(0%); }
+    50%  { transform: translateX(600%); }
+    100% { transform: translateX(0%); }
   }
   .bg-scan-center {
     position: relative; z-index: 2;
@@ -1204,18 +1203,21 @@ function renderPiezaImg() {
   const deg = ((piezaImgRotation % 360) + 360) % 360;
 
   if (deg === 90 || deg === 270) {
-    // Al rotar 90°, el contenido visual gira pero la CAJA de la imagen
-    // (width/height en el flujo del documento) no debe cambiar de tamaño
-    // real — solo lo que se ve adentro. Usamos position:absolute dentro
-    // de un contenedor con altura fija para que object-fit:contain haga
-    // todo el trabajo de encaje, sin que el tamaño real en píxeles de la
-    // imagen pueda inflar el layout de la página.
+    // Al rotar 90°, el "ancho" visual de la imagen pasa a ser su alto y
+    // viceversa. Si la imagen ocupa 100% del contenedor antes de rotar,
+    // tras la rotación se desborda (porque container suele ser más ancho
+    // que alto). Compensamos con scale() usando la proporción real del
+    // contenedor para que quede completa y centrada.
+    const containerW = wrap.clientWidth || 300;
+    const containerH = 286;
+    const scale = Math.min(containerW / containerH, containerH / containerW);
+
     img.style.position   = 'absolute';
     img.style.inset      = '0';
     img.style.width      = '100%';
     img.style.height     = '100%';
     img.style.maxHeight  = 'none';
-    img.style.transform  = `rotate(${piezaImgRotation}deg)`;
+    img.style.transform  = `rotate(${piezaImgRotation}deg) scale(${scale})`;
     wrap.style.height    = '286px'; // alto fijo para que la caja no colapse con position:absolute adentro
   } else {
     img.style.position   = 'static';
@@ -1401,8 +1403,20 @@ function deletePiezaImg() {
 // Devuelve el dataUrl de la pieza con la rotación manual aplicada al canvas
 async function getPiezaImgFinal() {
   if (!piezaImgData) return null;
-  if (piezaImgRotation === 0) return piezaImgData;
-  return rotateImageData(piezaImgData, piezaImgRotation);
+
+  // Si es PNG con transparencia, componerlo sobre fondo gris ANTES de
+  // rotar. rotateImageData exporta a JPEG (sin canal alfa), así que si
+  // rotáramos primero, el canvas "quemaría" la transparencia en negro
+  // antes de poder aplicar el fondo gris correcto.
+  let source = piezaImgData;
+  if (piezaImgMime === 'image/png') {
+    // cLight se define más abajo en generatePDF; acá usamos el mismo gris
+    // claro fijo para que el resultado sea consistente sin depender de ese scope.
+    source = await flattenPngOnGray(piezaImgData, [241, 245, 249]);
+  }
+
+  if (piezaImgRotation === 0) return source;
+  return rotateImageData(source, piezaImgRotation);
 }
 
 // ══════════════════════════════════════════════════
@@ -2410,14 +2424,9 @@ async function generatePDF() {
     doc.setDrawColor(...cBorder);
     doc.setLineWidth(0.3);
     doc.roundedRect(W - margin - imgSize, 27, imgSize, imgSize, 3, 3, 'S');
-    // Para PNG con transparencia: componer sobre fondo gris ANTES de insertar.
-    // jsPDF no siempre respeta el canal alfa correctamente al renderizar el PDF,
-    // así que se "quema" el fondo gris (igual al marco) y se inserta como JPEG.
-    const imgToInsert = piezaImgMime === 'image/png'
-      ? await flattenPngOnGray(piezaImgFinal, cLight)
-      : piezaImgFinal;
-    const imgFormat = piezaImgMime === 'image/png' ? 'JPEG' : 'JPEG';
-    try { doc.addImage(imgToInsert, imgFormat, px, py, pw, ph, '', 'FAST'); } catch(e) {}
+    // getPiezaImgFinal() ya compuso el PNG transparente sobre fondo gris
+    // y lo convirtió a JPEG — acá solo insertamos el resultado final.
+    try { doc.addImage(piezaImgFinal, 'JPEG', px, py, pw, ph, '', 'FAST'); } catch(e) {}
     doc.setFontSize(6);
     doc.setTextColor(...cMid);
     doc.text('PIEZA', W - margin - imgSize/2, 27 + imgSize + 4, { align: 'center' });
