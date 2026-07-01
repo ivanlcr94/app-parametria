@@ -1280,7 +1280,7 @@ function rotatePiezaImg() {
 }
 
 let _bgRemovalModule = null;
-let _bgCancelled = false; // flag de cancelación — descarta el resultado aunque el worker termine
+let _bgCancelReject  = null; // función que rechaza la promesa de cancelación
 
 async function loadBgRemovalModule() {
   if (_bgRemovalModule) return _bgRemovalModule;
@@ -1289,22 +1289,27 @@ async function loadBgRemovalModule() {
 }
 
 function cancelBgRemoval() {
-  _bgCancelled = true;
+  if (_bgCancelReject) {
+    _bgCancelReject(new DOMException('Cancelado por el usuario', 'AbortError'));
+    _bgCancelReject = null;
+  }
 }
 
 async function removePiezaBackground() {
   if (!piezaImgData) return;
-  const btn          = document.getElementById('removeBgBtn');
-  const status        = document.getElementById('removeBgStatus');
-  const scanOverlay   = document.getElementById('bgScanOverlay');
-  const scanLabel     = document.getElementById('bgScanLabel');
-  const busyOverlay   = document.getElementById('appBusyOverlay');
-  const piezaWrap     = document.getElementById('piezaImgWrap');
+  const btn         = document.getElementById('removeBgBtn');
+  const status      = document.getElementById('removeBgStatus');
+  const scanOverlay = document.getElementById('bgScanOverlay');
+  const scanLabel   = document.getElementById('bgScanLabel');
+  const busyOverlay = document.getElementById('appBusyOverlay');
+  const piezaWrap   = document.getElementById('piezaImgWrap');
 
   const setLabel = txt => { scanLabel.textContent = txt; };
 
-  _bgCancelled = false;
   let succeeded = false;
+
+  // Promesa que se rechaza cuando el usuario toca "Cancelar"
+  const cancelPromise = new Promise((_, reject) => { _bgCancelReject = reject; });
 
   btn.innerHTML = '✕ Cancelar';
   btn.onclick   = cancelBgRemoval;
@@ -1331,46 +1336,34 @@ async function removePiezaBackground() {
 
     setLabel('Descargando modelo');
 
-    const blob = await removeBackground(sourceImg, {
-      model: 'large',
-      device: 'cpu',
-      proxyToWorker: true,
-      progress: (key, current, total) => {
-        if (_bgCancelled) return;
-        const stage = humanizeBgKey(key);
-        if (total && total > 1 && /fetch/i.test(key)) {
-          const pct = Math.round((current / total) * 100);
-          setLabel(`${stage} ${pct}%`);
-        } else {
-          setLabel(stage);
-        }
-      },
-    });
-
-    // Verificar si el usuario canceló mientras el worker procesaba
-    if (_bgCancelled) {
-      showToast('Proceso cancelado');
-      return;
-    }
+    // Promise.race: gana quien termine primero — el modelo o la cancelación
+    const blob = await Promise.race([
+      removeBackground(sourceImg, {
+        model: 'large',
+        device: 'cpu',
+        proxyToWorker: true,
+        progress: (key, current, total) => {
+          const stage = humanizeBgKey(key);
+          if (total && total > 1 && /fetch/i.test(key)) {
+            setLabel(`${stage} ${Math.round((current / total) * 100)}%`);
+          } else {
+            setLabel(stage);
+          }
+        },
+      }),
+      cancelPromise,
+    ]);
 
     setLabel('Optimizando resultado');
-    const resultDataUrl = await blobToDataUrl(blob);
+    const resultDataUrl = await Promise.race([blobToDataUrl(blob), cancelPromise]);
+    const compressed    = await Promise.race([resizeAndCompressPng(resultDataUrl, 1200), cancelPromise]);
 
-    if (_bgCancelled) {
-      showToast('Proceso cancelado');
-      return;
-    }
-
-    piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
+    piezaImgData     = compressed;
     piezaImgMime     = 'image/png';
     piezaImgRotation = 0;
     renderPiezaImg();
 
-    _piezaBgUndoSnapshot = {
-      dataUrl:  previousImgData,
-      rotation: previousImgRotation,
-      mime:     previousImgMime,
-    };
+    _piezaBgUndoSnapshot = { dataUrl: previousImgData, rotation: previousImgRotation, mime: previousImgMime };
     succeeded = true;
     showUndoBgButton();
 
@@ -1380,28 +1373,27 @@ async function removePiezaBackground() {
     setTimeout(() => { status.style.display = 'none'; }, 4000);
 
   } catch (err) {
-    if (!_bgCancelled) {
+    scanOverlay.style.display = 'none';
+    if (err.name === 'AbortError') {
+      showToast('Proceso cancelado');
+    } else {
       console.error('Error al quitar fondo:', err);
-      scanOverlay.style.display = 'none';
       status.style.display = 'block';
       status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión.');
-    } else {
-      showToast('Proceso cancelado');
     }
   } finally {
+    _bgCancelReject = null;
     scanOverlay.style.display = 'none';
-    // Solo resetear el botón si NO terminó con éxito — si sí, showUndoBgButton() ya lo configuró
     if (!succeeded) {
-      btn.innerHTML    = '✂️ Quitar fondo';
-      btn.onclick      = removePiezaBackground;
-      btn.disabled     = !piezaImgData;
+      btn.innerHTML = '✂️ Quitar fondo';
+      btn.onclick   = removePiezaBackground;
+      btn.disabled  = !piezaImgData;
     }
     btn.classList.remove('bg-cancelling');
     btn.style.borderColor = '';
     btn.style.color       = '';
     busyOverlay.classList.remove('active');
     piezaWrap.classList.remove('bg-processing');
-    _bgCancelled = false;
   }
 }
 
