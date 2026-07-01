@@ -305,6 +305,49 @@
     text-align: center; max-width: 80%;
     text-shadow: 0 1px 3px rgba(0,0,0,.5);
   }
+  .bg-scan-dots span {
+    opacity: .2;
+    animation: bgDotBlink 1.2s infinite;
+  }
+  .bg-scan-dots span:nth-child(1) { animation-delay: 0s; }
+  .bg-scan-dots span:nth-child(2) { animation-delay: .25s; }
+  .bg-scan-dots span:nth-child(3) { animation-delay: .5s; }
+  @keyframes bgDotBlink {
+    0%, 80%, 100% { opacity: .2; }
+    40%           { opacity: 1; }
+  }
+
+  /* ── Bloqueo de la app mientras se quita el fondo ── */
+  #appBusyOverlay {
+    position: fixed; inset: 0; z-index: 9000;
+    background: rgba(13,17,23,.45);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    display: none; pointer-events: none;
+  }
+  #appBusyOverlay.active {
+    display: block; pointer-events: all;
+  }
+  /* El cuadro de imagen y el botón de cancelar se elevan por encima del overlay */
+  #piezaImgWrap.bg-processing,
+  #removeBgBtn.bg-cancelling {
+    position: relative; z-index: 9001;
+  }
+  #piezaImgWrap.bg-processing {
+    box-shadow: 0 0 0 4px var(--accent), 0 8px 40px rgba(0,0,0,.4);
+  }
+  .bg-scan-dots span {
+    opacity: .2;
+    animation: bgDotBlink 1.2s infinite;
+  }
+  .bg-scan-dots span:nth-child(1) { animation-delay: 0s; }
+  .bg-scan-dots span:nth-child(2) { animation-delay: .2s; }
+  .bg-scan-dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes bgDotBlink {
+    0%, 80%, 100% { opacity: .2; }
+    40%           { opacity: 1; }
+  }
+
   .pieza-img-del, .pieza-img-rot {
     border: none; border-radius: 6px;
     width: 32px; height: 32px; font-size: 15px; cursor: pointer;
@@ -518,6 +561,7 @@
 </style>
 </head>
 <body>
+<div id="appBusyOverlay"></div>
 
 <!-- Banner instalar PWA -->
 <div id="installBanner" style="
@@ -627,7 +671,7 @@
             <div class="bg-scan-line"></div>
             <div class="bg-scan-center">
               <div class="bg-scan-spinner"></div>
-              <p id="bgScanText" class="bg-scan-text">Quitando fondo…</p>
+              <p id="bgScanText" class="bg-scan-text"><span id="bgScanLabel">Quitando fondo</span><span class="bg-scan-dots"><span>.</span><span>.</span><span>.</span></span></p>
             </div>
           </div>
         </div>
@@ -1235,9 +1279,8 @@ function rotatePiezaImg() {
   renderPiezaImg();
 }
 
-// ── Quitar fondo de la imagen de pieza (servidor Node.js local) ──
-// ── Quitar fondo de la imagen de pieza (ONNX desde CDN, se cachea solo) ──
 let _bgRemovalModule = null; // cache del módulo ya importado en esta sesión
+let _bgAbortController = null; // permite cancelar el proceso en curso
 
 async function loadBgRemovalModule() {
   if (_bgRemovalModule) return _bgRemovalModule;
@@ -1245,71 +1288,73 @@ async function loadBgRemovalModule() {
   return _bgRemovalModule;
 }
 
+function cancelBgRemoval() {
+  if (_bgAbortController) {
+    _bgAbortController.abort();
+    _bgAbortController = null;
+  }
+}
+
 async function removePiezaBackground() {
   if (!piezaImgData) return;
-  const btn         = document.getElementById('removeBgBtn');
-  const status       = document.getElementById('removeBgStatus');
-  const scanOverlay  = document.getElementById('bgScanOverlay');
-  const scanText     = document.getElementById('bgScanText');
+  const btn          = document.getElementById('removeBgBtn');
+  const status        = document.getElementById('removeBgStatus');
+  const scanOverlay   = document.getElementById('bgScanOverlay');
+  const scanLabel     = document.getElementById('bgScanLabel');
+  const busyOverlay   = document.getElementById('appBusyOverlay');
+  const piezaWrap     = document.getElementById('piezaImgWrap');
 
-  btn.disabled = true;
+  const setLabel = txt => { scanLabel.textContent = txt; };
+
+  // Convertir el botón en "✕ Cancelar" mientras procesa
+  btn.innerHTML = '✕ Cancelar';
+  btn.onclick   = cancelBgRemoval;
+  btn.disabled  = false;
+  btn.classList.add('bg-cancelling');
+  btn.style.borderColor = 'var(--danger)';
+  btn.style.color       = 'var(--danger)';
+
   scanOverlay.style.display = 'flex';
-  scanText.textContent = 'Cargando librería…';
+  busyOverlay.classList.add('active');
+  piezaWrap.classList.add('bg-processing');
+  setLabel('Cargando librería');
 
   // Guardar el estado anterior para poder deshacer
   const previousImgData     = piezaImgData;
   const previousImgRotation = piezaImgRotation;
   const previousImgMime     = piezaImgMime;
 
-  // Durante la etapa de cómputo (inferencia del modelo) la librería no
-  // reporta progreso granular — simulamos un avance suave para que la
-  // animación no se vea estancada en 0% y salte de golpe a 100%.
-  let simInterval = null;
-  function startSimulatedProgress(label) {
-    let fake = 0;
-    scanText.textContent = `${label} 0%`;
-    simInterval = setInterval(() => {
-      fake = Math.min(fake + Math.random() * 4 + 1, 96); // nunca llega a 100 solo, lo cierra el real
-      scanText.textContent = `${label} ${Math.round(fake)}%`;
-    }, 220);
-  }
-  function stopSimulatedProgress() {
-    if (simInterval) { clearInterval(simInterval); simInterval = null; }
-  }
+  // AbortController — permite cancelar los fetches del modelo
+  _bgAbortController = new AbortController();
+  const signal = _bgAbortController.signal;
 
   try {
     const { removeBackground } = await loadBgRemovalModule();
 
-    // Aplicar rotación manual antes de procesar, para que el resultado quede ya derecho
     const sourceImg = piezaImgRotation !== 0
       ? await rotateImageData(piezaImgData, piezaImgRotation)
       : piezaImgData;
 
-    scanText.textContent = 'Descargando modelo…';
+    setLabel('Descargando modelo');
 
     const blob = await removeBackground(sourceImg, {
-      // publicPath por defecto de la librería (staticimgly.com) — se cachea
-      // automáticamente en el navegador/Service Worker tras la primera descarga.
-      model: 'large',          // isnet — máxima calidad disponible
+      model: 'large',
       device: 'cpu',
-      proxyToWorker: true,      // corre la inferencia en un Web Worker: no congela la UI ni la animación
+      proxyToWorker: true,
+      fetchArgs: { signal }, // el AbortController interrumpe los fetches del modelo
       progress: (key, current, total) => {
         const stage = humanizeBgKey(key);
-        if (total && total > 1) {
-          // Hay progreso real (típico de la descarga del modelo) → usarlo tal cual
-          stopSimulatedProgress();
+        if (total && total > 1 && /fetch/i.test(key)) {
           const pct = Math.round((current / total) * 100);
-          scanText.textContent = `${stage} ${pct}%`;
+          setLabel(`${stage} ${pct}%`);
         } else {
-          // Sin progreso granular (etapa de cómputo) → simular avance continuo
-          stopSimulatedProgress();
-          startSimulatedProgress(stage);
+          setLabel(stage);
         }
       },
     });
 
-    stopSimulatedProgress();
-    scanText.textContent = 'Optimizando resultado… 100%';
+    _bgAbortController = null;
+    setLabel('Optimizando resultado');
     const resultDataUrl = await blobToDataUrl(blob);
 
     piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
@@ -1317,7 +1362,6 @@ async function removePiezaBackground() {
     piezaImgRotation = 0;
     renderPiezaImg();
 
-    // Habilitar deshacer con el estado previo guardado
     _piezaBgUndoSnapshot = {
       dataUrl:  previousImgData,
       rotation: previousImgRotation,
@@ -1331,13 +1375,26 @@ async function removePiezaBackground() {
     setTimeout(() => { status.style.display = 'none'; }, 4000);
 
   } catch (err) {
-    console.error('Error al quitar fondo:', err);
-    stopSimulatedProgress();
+    _bgAbortController = null;
     scanOverlay.style.display = 'none';
-    status.style.display = 'block';
-    status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet (se necesita la primera vez).');
+    const cancelled = err.name === 'AbortError' || err.message?.includes('abort');
+    if (cancelled) {
+      showToast('Proceso cancelado');
+    } else {
+      console.error('Error al quitar fondo:', err);
+      status.style.display = 'block';
+      status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet.');
+    }
   } finally {
-    btn.disabled = false;
+    // Restaurar el botón a su estado normal
+    btn.innerHTML    = '✂️ Quitar fondo';
+    btn.onclick      = removePiezaBackground;
+    btn.disabled     = !piezaImgData;
+    btn.classList.remove('bg-cancelling');
+    btn.style.borderColor = '';
+    btn.style.color       = '';
+    busyOverlay.classList.remove('active');
+    piezaWrap.classList.remove('bg-processing');
   }
 }
 
@@ -1370,11 +1427,11 @@ function undoRemoveBg() {
 
 // Traduce las claves técnicas de progreso de la librería a texto legible
 function humanizeBgKey(key) {
-  if (!key) return 'Procesando…';
+  if (!key) return 'Procesando';
   if (/fetch/i.test(key))    return 'Descargando modelo';
-  if (/compute|inference/i.test(key)) return 'Analizando imagen';
+  if (/compute|inference/i.test(key)) return 'Borrando fondo';
   if (/decode/i.test(key))  return 'Procesando imagen';
-  return 'Procesando…';
+  return 'Procesando';
 }
 
 function blobToDataUrl(blob) {
