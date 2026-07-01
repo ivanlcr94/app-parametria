@@ -1279,8 +1279,8 @@ function rotatePiezaImg() {
   renderPiezaImg();
 }
 
-let _bgRemovalModule = null; // cache del módulo ya importado en esta sesión
-let _bgAbortController = null; // permite cancelar el proceso en curso
+let _bgRemovalModule = null;
+let _bgCancelled = false; // flag de cancelación — descarta el resultado aunque el worker termine
 
 async function loadBgRemovalModule() {
   if (_bgRemovalModule) return _bgRemovalModule;
@@ -1289,10 +1289,7 @@ async function loadBgRemovalModule() {
 }
 
 function cancelBgRemoval() {
-  if (_bgAbortController) {
-    _bgAbortController.abort();
-    _bgAbortController = null;
-  }
+  _bgCancelled = true;
 }
 
 async function removePiezaBackground() {
@@ -1306,7 +1303,9 @@ async function removePiezaBackground() {
 
   const setLabel = txt => { scanLabel.textContent = txt; };
 
-  // Convertir el botón en "✕ Cancelar" mientras procesa
+  _bgCancelled = false;
+  let succeeded = false;
+
   btn.innerHTML = '✕ Cancelar';
   btn.onclick   = cancelBgRemoval;
   btn.disabled  = false;
@@ -1319,14 +1318,9 @@ async function removePiezaBackground() {
   piezaWrap.classList.add('bg-processing');
   setLabel('Cargando librería');
 
-  // Guardar el estado anterior para poder deshacer
   const previousImgData     = piezaImgData;
   const previousImgRotation = piezaImgRotation;
   const previousImgMime     = piezaImgMime;
-
-  // AbortController — permite cancelar los fetches del modelo
-  _bgAbortController = new AbortController();
-  const signal = _bgAbortController.signal;
 
   try {
     const { removeBackground } = await loadBgRemovalModule();
@@ -1341,8 +1335,8 @@ async function removePiezaBackground() {
       model: 'large',
       device: 'cpu',
       proxyToWorker: true,
-      fetchArgs: { signal }, // el AbortController interrumpe los fetches del modelo
       progress: (key, current, total) => {
+        if (_bgCancelled) return;
         const stage = humanizeBgKey(key);
         if (total && total > 1 && /fetch/i.test(key)) {
           const pct = Math.round((current / total) * 100);
@@ -1353,9 +1347,19 @@ async function removePiezaBackground() {
       },
     });
 
-    _bgAbortController = null;
+    // Verificar si el usuario canceló mientras el worker procesaba
+    if (_bgCancelled) {
+      showToast('Proceso cancelado');
+      return;
+    }
+
     setLabel('Optimizando resultado');
     const resultDataUrl = await blobToDataUrl(blob);
+
+    if (_bgCancelled) {
+      showToast('Proceso cancelado');
+      return;
+    }
 
     piezaImgData     = await resizeAndCompressPng(resultDataUrl, 1200);
     piezaImgMime     = 'image/png';
@@ -1367,6 +1371,7 @@ async function removePiezaBackground() {
       rotation: previousImgRotation,
       mime:     previousImgMime,
     };
+    succeeded = true;
     showUndoBgButton();
 
     scanOverlay.style.display = 'none';
@@ -1375,26 +1380,28 @@ async function removePiezaBackground() {
     setTimeout(() => { status.style.display = 'none'; }, 4000);
 
   } catch (err) {
-    _bgAbortController = null;
-    scanOverlay.style.display = 'none';
-    const cancelled = err.name === 'AbortError' || err.message?.includes('abort');
-    if (cancelled) {
-      showToast('Proceso cancelado');
-    } else {
+    if (!_bgCancelled) {
       console.error('Error al quitar fondo:', err);
+      scanOverlay.style.display = 'none';
       status.style.display = 'block';
-      status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión a internet.');
+      status.textContent = '❌ ' + (err.message || 'Error al procesar. Revisá tu conexión.');
+    } else {
+      showToast('Proceso cancelado');
     }
   } finally {
-    // Restaurar el botón a su estado normal
-    btn.innerHTML    = '✂️ Quitar fondo';
-    btn.onclick      = removePiezaBackground;
-    btn.disabled     = !piezaImgData;
+    scanOverlay.style.display = 'none';
+    // Solo resetear el botón si NO terminó con éxito — si sí, showUndoBgButton() ya lo configuró
+    if (!succeeded) {
+      btn.innerHTML    = '✂️ Quitar fondo';
+      btn.onclick      = removePiezaBackground;
+      btn.disabled     = !piezaImgData;
+    }
     btn.classList.remove('bg-cancelling');
     btn.style.borderColor = '';
     btn.style.color       = '';
     busyOverlay.classList.remove('active');
     piezaWrap.classList.remove('bg-processing');
+    _bgCancelled = false;
   }
 }
 
